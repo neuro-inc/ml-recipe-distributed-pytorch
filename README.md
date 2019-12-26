@@ -63,7 +63,7 @@ Through a simple file explorer interface, you can upload test images and perform
 On local machine, run `make upload-data`. This command pushes local files stored in `./data`
 into `storage:qa-competition/data` mounted to your development environment's `/project/data`.
 
-### Uploading data to the Job from Google Cloud Storage
+### Uploading to the Job from Google Cloud
 
 Google Cloud SDK is pre-installed on all jobs produced from the Base Image.
 
@@ -71,7 +71,7 @@ Neuro Project Template provides a fast way to authenticate Google Cloud SDK to w
 
 Download service account key to the local config directory `./config/` and set appropriate permissions on it:
 
-```
+```bash
 $ SA_NAME="neuro-job"
 $ gcloud iam service-accounts keys create ./config/$SA_NAME-key.json \
   --iam-account $SA_NAME@$PROJECT_ID.iam.gserviceaccount.com
@@ -80,7 +80,7 @@ $ chmod 600 ./config/$SA_NAME-key.json
 
 Inform Neuro about this file:
 
-```
+```bash
 $ export GCP_SECRET_FILE=$SA_NAME-key.json
 ```
 
@@ -88,7 +88,7 @@ Alternatively, set this value directly in `Makefile`.
 
 Check that Neuro can access and use this file for authentication:
 
-```
+```bash
 $ make gcloud-check-auth
 Using variable: GCP_SECRET_FILE='neuro-job-key.json'
 Google Cloud will be authenticated via service account key file: '/path/to/project/config/neuro-job-key.json'
@@ -96,7 +96,7 @@ Google Cloud will be authenticated via service account key file: '/path/to/proje
 
 Now, if you run a `develop`, `train`, or `jupyter` job, Neuro will authenticate Google Cloud SDK via your secret file, so you will be able to use `gsutil` or `gcloud` there:
 
-```
+```bash
 $ make develop
 ...
 $ make connect-develop
@@ -106,33 +106,6 @@ Hello World
 ```
 
 Also, environment variable `GOOGLE_APPLICATION_CREDENTIALS` is set up for these jobs, so that you an access your data on Google Cloud Storage via Python API (see example in [Google Cloud Storage documentation](https://cloud.google.com/storage/docs/reference/libraries)).
-
-### Uploading data to the Job from AWS S3
-
-AWS CLI is pre-installed on all jobs produced from the Base Image.
-
-Neuro Project Template provides a fast way to authenticate AWS CLI to work with AWS user account (see instructions on setting up your AWS user account credentials and creating the secret key in [documentation](https://neu.ro/docs/aws_s3)).
-
-In project directory, write your AWS credentials to a file `./config/aws-credentials.txt`, set appropriate permissions on it,
-inform Neuro about this file by setting a specific env var, and check that Neuro can access and use this file for authentication:
-
-```
-$ export AWS_SECRET_FILE=aws-credentials.txt
-$ chmod 600 ./config/$AWS_SECRET_FILE
-$ make aws-check-auth
-AWS will be authenticated via user account credentials file: '/path/to/project/config/aws-credentials.txt'
-```
-
-Now, if you run a `develop`, `train`, or `jupyter` job, Neuro will authenticate AWS CLI via your secret file, so you will be able to use `aws` there:
-
-```
-$ make develop
-...
-$ make connect-develop
-...
-root@job-098b8584-1003-4cb9-adfb-3606604a3855:/# aws s3 cp s3://my-neuro-bucket-42/hello.txt -
-Hello World
-```
 
 ## Customization
 
@@ -154,7 +127,6 @@ you need to change the following line to point to its location. For example:
 If you want to debug your code on GPU, you can run a sleeping job via `make develop`, then connect to its bash over SSH
 via `make connect-develop` (type `exit` or `^D` to close SSH connection), see its logs via `make logs-develop`, or 
 forward port 22 from the job to localhost via `make port-forward-develop` to use it for remote debugging.
-Please find instructions on remote debugging via PyCharm Pro in the [documentation](https://neu.ro/docs/remote_debugging_pycharm). 
 
 Please don't forget to kill your job via `make kill-develop` not to waste your quota!   
 
@@ -168,18 +140,18 @@ save it to a file in local directory `./config/`, protect by setting appropriate
 and check that Neuro can access and use this file for authentication:
 
 ```
-$ export WANDB_SECRET_FILE=wandb-token.txt
+$ export WANDB_SECRET_FILE=wandb-key.txt
 $ echo "cf23df2207d99a74fbe169e3eba035e633b65d94" > config/$WANDB_SECRET_FILE
 $ chmod 600 config/$WANDB_SECRET_FILE
 $ make wandb-check-auth 
 Using variable: WANDB_SECRET_FILE=wandb-token.txt
-Weights & Biases will be authenticated via key file: '/path/to/project/config/wandb-token.txt'
+Weights & Biases will be authenticated via key file: '/path/to/project/config/wandb-key.txt'
 ```
 
 Now, if you run `develop`, `train`, or `jupyter` job, Neuro will authenticate W&B via your API key, 
 so that you will be able to use `wandb` there:
 
-```
+```bash
 $ make develop
 ...
 $ make connect-develop
@@ -216,35 +188,11 @@ the platform, you may disable the authentication updating this line to `HTTP_AUT
 
 ### Training command
 
-To tweak the training command, change the line in `Makefile`:
- 
-```
-TRAIN_CMD=python -u $(CODE_DIR)/train.py --data $(DATA_DIR)
-```
+`TRAINING_COMMAND?='echo "Replace this placeholder with a training script execution"'`
 
-And then, just run `make train`.
-Alternatively, you can specify training command for one separate training job:
+If you want to train some models from code instead of Jupyter Notebooks, you need to update this line. For example:
 
-```
-make train TRAIN_CMD='python -u $(CODE_DIR)/train.py --data $(DATA_DIR)'
-```
+`TRAINING_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py --data $(DATA_DIR)'"`
 
-Note, in this case we use single quotes so that local `bash` does not resolve environment variables. 
-You can assume that training command `TRAIN_CMD` runs in the project's root directory.
-
-
-### Multiple training jobs
-
-You can run multiple training experiments simultaneously by setting up `RUN` environment variable:
-```
-make train RUN=new-idea
-```
-Note, this label becomes a postfix of the job name, which may contain only alphanumeric characters and hyphen `-`, and cannot end with hyphen or be longer than 40 characters.
-
-Please, don't forget to kill the jobs you started:
-- `make kill-train` to kill the training job started via `make train`,
-- `make kill-train RUN=new-idea` to kill the training job started via `make train RUN=new-idea`,
-- `make kill-train-all` to kill all training jobs started in current project,
-- `make kill-jupyter` to kill the job started via `make jupyter`,
-- ...
-- `make kill-all` to kill all jobs started in current project.
+Please note that commands with arguments should be wrapped with either quotes `'` or double quotes `"` 
+in order to be processed correctly.  
