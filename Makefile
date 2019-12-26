@@ -22,6 +22,7 @@ DEVELOP_JOB?=develop-$(PROJECT_POSTFIX)
 JUPYTER_JOB?=jupyter-$(PROJECT_POSTFIX)
 TENSORBOARD_JOB?=tensorboard-$(PROJECT_POSTFIX)
 FILEBROWSER_JOB?=filebrowser-$(PROJECT_POSTFIX)
+PREPROCESS_JOB?=preprocess-$(PROJECT_POSTFIX)
 
 ##### ENVIRONMENTS #####
 
@@ -44,7 +45,7 @@ HTTP_AUTH?=--http-auth
 
 # Command to run training inside the environment. Example:
 TRAINING_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py --data $(DATA_DIR)'"
-
+PREPROCESS_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/preprocess_data.py -c $(CODE_DIR)/configs/preprocess_all.cfg'"
 
 LOCAL_PORT?=2211
 
@@ -216,7 +217,7 @@ develop: _check_setup upload-code upload-config upload-notebooks  ### Run a deve
 		--name $(DEVELOP_JOB) \
 		--preset $(PRESET) \
 		--detach \
-		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):ro \
+		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CONFIG_DIR):$(PROJECT_PATH_ENV)/$(CONFIG_DIR):ro \
 		--volume $(PROJECT_PATH_STORAGE)/$(RESULTS_DIR):$(PROJECT_PATH_ENV)/$(RESULTS_DIR):rw \
@@ -249,7 +250,7 @@ train: _check_setup upload-code upload-config   ### Run a training job
 	$(NEURO) run \
 		--name $(TRAIN_JOB) \
 		--preset $(PRESET) \
-		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):ro \
+		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):ro \
 		--volume $(PROJECT_PATH_STORAGE)/$(CONFIG_DIR):$(PROJECT_PATH_ENV)/$(CONFIG_DIR):ro \
 		--volume $(PROJECT_PATH_STORAGE)/$(RESULTS_DIR):$(PROJECT_PATH_ENV)/$(RESULTS_DIR):rw \
@@ -260,6 +261,23 @@ train: _check_setup upload-code upload-config   ### Run a training job
 		--env JOB_TIMEOUT=0 \
 		$(CUSTOM_ENV_NAME) \
 		$(TRAINING_COMMAND)
+
+.PHONY: preprocess
+preprocess: _check_setup upload-code upload-config   ### Run a preprocess job
+	$(NEURO) run \
+		--name $(PREPROCESS_JOB) \
+		--preset cpu-large \
+		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):rw \
+		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):ro \
+		--volume $(PROJECT_PATH_STORAGE)/$(CONFIG_DIR):$(PROJECT_PATH_ENV)/$(CONFIG_DIR):ro \
+		--volume $(PROJECT_PATH_STORAGE)/$(RESULTS_DIR):$(PROJECT_PATH_ENV)/$(RESULTS_DIR):rw \
+		${OPTION_GCP_CREDENTIALS} \
+		${OPTION_WANDB_CREDENTIALS} \
+		--env PYTHONPATH=$(PROJECT_PATH_ENV) \
+		--env EXPOSE_SSH=yes \
+		--env JOB_TIMEOUT=0 \
+		$(CUSTOM_ENV_NAME) \
+		$(PREPROCESS_COMMAND)
 
 .PHONY: kill-train
 kill-train:  ### Terminate the training job
