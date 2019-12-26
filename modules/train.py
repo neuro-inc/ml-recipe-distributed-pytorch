@@ -6,11 +6,13 @@ from pathlib import Path
 import configargparse
 import numpy as np
 import torch
-from model.dataset import QADataloaderOptimal
+from model.dataset import QADataloader
 from model.model import BertForQuestionAnswering
 from model.trainer import Trainer
 from torch.utils.tensorboard import SummaryWriter
 from transformers import BertTokenizer
+
+from sklearn.model_selection import train_test_split
 
 
 def set_seed(seed: int = 0) -> None:
@@ -75,27 +77,53 @@ def main() -> None:
 
     tokenizer = BertTokenizer.from_pretrained(bert_model, do_lower_case=do_lower_case)
 
-    dataset = QADataloaderOptimal(params.data_path, tokenizer,
-                                  max_seq_len=params.max_seq_len,
-                                  max_question_len=params.max_seq_len,
-                                  doc_stride=params.max_seq_len)
-    # vocab = dataset.vocab
+    train_dataset = QADataloader(params.data_path)
+    test_dataset = QADataloader(params.data_path)
+    indexes = np.arange(len(test_dataset))
 
-    model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(dataset.labels2id))
+    train_indexes, test_indexes = train_test_split(indexes, test_size=0.15, random_state=params.seed)
+
+    train_dataset.indexes = train_indexes
+    test_dataset.indexes = test_indexes
+
+    model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(train_dataset.labels2id))
 
     writer = SummaryWriter(log_dir=params.dump_dir / f'board/{params.experiment_name}')
 
-    trainer = Trainer(model, tokenizer, dataset,
+    trainer = Trainer(model, tokenizer, train_dataset, test_dataset,
                       writer=writer,
                       device=device,
                       train_batch_size=params.batch_size,
+                      test_batch_size=params.batch_size,
                       batch_split=params.batch_split,
                       n_jobs=params.n_jobs,
                       n_epochs=params.n_epochs,
                       lr=params.lr,
                       weight_decay=params.weight_decay)
 
-    trainer.train()
+    # help functions
+    def save_last(*args, **kwargs):
+        state_dict = trainer.state_dict()
+        torch.save(state_dict, os.path.join(params.dump_dir, 'last.ch'))
+
+    # class save_best:
+    #     def __init__(self):
+    #         self.metric = trainer_config.best_metric
+    #         self.order = trainer_config.best_order
+    #         self.value = 0
+    #
+    #     def __call__(self, *args):
+    #         assert hasattr(trainer, 'metrics')
+    #         assert self.metric in trainer.metrics
+    #
+    #         if eval(f'{trainer.metrics[self.metric]}{self.order}{self.value}'):
+    #             self.value = trainer.metrics[self.metric]
+    #             logger.info(f'Best value of {self.metric} was achieved after training step {trainer.global_step} '
+    #                         f'and equals to {self.value}')
+    #             state_dict = trainer.state_dict()
+    #             torch.save(state_dict, join(trainer_config.dump_dir, 'best.ch'))
+
+    trainer.train(after_epoch_funcs=[save_last, trainer.test])
     trainer.save_state_dict(params.dump_dir / f'{params.experiment_name}.ch')
 
 

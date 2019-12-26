@@ -26,9 +26,10 @@ class AverageMeter:
 
 
 class Trainer:
-    def __init__(self, model, tokenizer, train_dataset, writer, *,
+    def __init__(self, model, tokenizer, train_dataset, test_dataset, writer, *,
                  device=torch.device('cuda'),
                  train_batch_size=32,
+                 test_batch_size=32,
                  batch_split=1,
                  n_jobs=4,
                  n_epochs=0,
@@ -47,11 +48,8 @@ class Trainer:
 
         self.optimizer = torch.optim.Adam(optimizer_grouped_parameters, lr=lr)
 
-        # self.cls_criteria = LabelSmoothingLossWithLogits(n_classes=len(vocab), smoothing=smoothing,
-        #                                                  ignore_index=vocab.pad_index).to(device)
-        # self.off_criteria = nn.SmoothL1Loss().to(device)
-
         logger.info(f'Train Dataset len: {len(train_dataset)}.')
+        logger.info(f'Test Dataset len: {len(test_dataset)}.')
 
         train_sampler = RandomSampler(train_dataset)
         self.train_dataloader = torch.utils.data.DataLoader(train_dataset,
@@ -61,6 +59,12 @@ class Trainer:
                                                             drop_last=True,
                                                             collate_fn=self.collate_fun)
 
+        self.test_dataloader = torch.utils.data.DataLoader(test_dataset,
+                                                           batch_size=test_batch_size,
+                                                           num_workers=n_jobs,
+                                                           shuffle=False,
+                                                           drop_last=False,
+                                                           collate_fn=self.collate_fun)
         self.device = device
         self.batch_split = batch_split
         self.n_epochs = n_epochs
@@ -115,9 +119,16 @@ class Trainer:
 
         return start_loss + end_loss + class_loss
 
-    def train(self):
+    def train(self, after_epoch_funcs=None):
+        after_epoch_funcs = [] if after_epoch_funcs is None else after_epoch_funcs
+
+        def run_after_funcs():
+            for func in after_epoch_funcs:
+                func(epoch_i)
+
         for epoch_i in range(1, self.n_epochs+1):
             self._train(epoch_i)
+            run_after_funcs()
 
     def _train(self, epoch_i):
         self.model.train()
@@ -144,11 +155,34 @@ class Trainer:
                 self.optimizer.zero_grad()
 
                 for k, v in avg_losses.items():
-                    self.writer.add_scalar(f'training/{k}', v(), global_step=self.global_step)
+                    self.writer.add_scalar(f'train/{k}', v(), global_step=self.global_step)
 
                 self.global_step += 1
 
             tqdm_data.set_postfix({k: v() for k, v in avg_losses.items()})
+
+    def test(self, epoch_i):
+        self._test(epoch_i)
+
+    def _test(self, epoch_i):
+        self.model.eval()
+
+        avg_losses = defaultdict(AverageMeter)
+
+        tqdm_data = tqdm(self.test_dataloader, desc=f'Test (epoch #{epoch_i} / {self.n_epochs})')
+
+        for i, ((input_ids, attention_mask, token_types), labels) in enumerate(tqdm_data):
+
+            pred_logits = self.model(input_ids=input_ids,
+                                     attention_mask=attention_mask,
+                                     token_type_ids=token_types)
+            loss = self._loss(pred_logits, labels)
+            avg_losses['loss'].update(loss.item())
+
+            tqdm_data.set_postfix({k: v() for k, v in avg_losses.items()})
+
+        for k, v in avg_losses.items():
+            self.writer.add_scalar(f'test/{k}', v(), global_step=self.global_step)
 
     def save_state_dict(self, path_):
         model_dict = self.model.state_dict()
