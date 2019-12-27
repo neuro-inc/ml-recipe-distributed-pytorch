@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from sklearn import metrics
 # from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler
 from tqdm.auto import tqdm
 
 logger = logging.getLogger(__file__)
@@ -39,6 +39,7 @@ class Trainer:
                  w_start=1,
                  w_end=1,
                  w_cls=1,
+                 train_weights=None,
                  debug=False):
 
         logger.info(f'Used device: {device}.')
@@ -56,7 +57,9 @@ class Trainer:
         logger.info(f'Train Dataset len: {len(train_dataset)}.')
         logger.info(f'Test Dataset len: {len(test_dataset)}.')
 
-        train_sampler = RandomSampler(train_dataset)
+        train_sampler = RandomSampler(train_dataset) if train_weights is None else WeightedRandomSampler(train_weights,
+                                                                                                         len(train_weights))
+
         self.train_dataloader = torch.utils.data.DataLoader(train_dataset,
                                                             batch_size=int(train_batch_size // batch_split),
                                                             num_workers=n_jobs,
@@ -166,7 +169,7 @@ class Trainer:
         tqdm_data = tqdm(self.train_dataloader, desc=f'Train (epoch #{epoch_i} / {self.n_epochs})')
 
         for i, ((input_ids, attention_mask, token_types), labels) in enumerate(tqdm_data):
-
+            # print(labels[-1])
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,
                                      token_type_ids=token_types)

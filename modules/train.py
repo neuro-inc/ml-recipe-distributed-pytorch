@@ -6,13 +6,11 @@ from pathlib import Path
 import configargparse
 import numpy as np
 import torch
-from model.dataset import QADataloader
+from model.dataset_online import DataPreprocessorOnline, DataPreprocessorDatasetOnline
 from model.model import BertForQuestionAnswering
 from model.trainer import Trainer
 from torch.utils.tensorboard import SummaryWriter
 from transformers import BertTokenizer
-
-from sklearn.model_selection import train_test_split
 
 
 def set_seed(seed: int = 0) -> None:
@@ -55,6 +53,8 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for optimizer.')
 
     parser.add_argument('--data_path', type=str, required=True, help='')
+    parser.add_argument('--label_info_dump', type=str, default='./data/train_labels.pkl', help='')
+    parser.add_argument('--split_info_dump', type=str, default='./data/train_split.pkl', help='')
 
     parser.add_argument('--w_start', type=float, default=1, help='')
     parser.add_argument('--w_end', type=float, default=1, help='')
@@ -63,6 +63,23 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--debug', action='store_true', help='Debug mode.')
 
     return parser
+
+
+def get_datasets(params, tokenizer):
+    preprocessor = DataPreprocessorOnline(params.data_path,
+                                          label_info_dump=params.label_info_dump,
+                                          split_info_dump=params.split_info_dump)
+
+    label_counter, labels = preprocessor.scan_labels()
+    train_indexes, train_labels, test_indexes, test_labels = preprocessor.split_train_test(labels)
+
+    train_weights = np.asarray([1 / (label_counter[label]) for label in train_labels])
+    train_weights = train_weights / np.sum(train_weights)
+
+    train_dataset = DataPreprocessorDatasetOnline(preprocessor, tokenizer, train_indexes)
+    test_dataset = DataPreprocessorDatasetOnline(preprocessor, tokenizer, test_indexes)
+
+    return train_dataset, test_dataset, train_weights
 
 
 def show_params(params: configargparse.Namespace) -> None:
@@ -84,15 +101,7 @@ def main() -> None:
     do_lower_case = 'uncased' in bert_model
 
     tokenizer = BertTokenizer.from_pretrained(bert_model, do_lower_case=do_lower_case)
-
-    train_dataset = QADataloader(params.data_path)
-    test_dataset = QADataloader(params.data_path)
-    indexes = np.arange(len(test_dataset))
-
-    train_indexes, test_indexes = train_test_split(indexes, test_size=0.15, random_state=params.seed)
-
-    train_dataset.indexes = train_indexes
-    test_dataset.indexes = test_indexes
+    train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer)
 
     model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(train_dataset.labels2id))
 
@@ -111,6 +120,7 @@ def main() -> None:
                       w_start=params.w_start,
                       w_end=params.w_end,
                       w_cls=params.w_cls,
+                      train_weights=train_weights,
                       debug=params.debug)
 
     if params.last is not None:

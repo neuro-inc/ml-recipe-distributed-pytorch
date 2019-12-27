@@ -103,6 +103,9 @@ class DataPreprocessorDatasetOnline:
         self.max_question_len = max_question_len
         self.doc_stride = doc_stride
 
+        self.labels2id = DataPreprocessorOnline.labels2id
+        self.id2labels = DataPreprocessorOnline.id2labels
+
     def __len__(self):
         return len(self.indexes)
 
@@ -198,7 +201,7 @@ class DataPreprocessorDatasetOnline:
         document_len = self.max_seq_len - len(tokenized_question) - 3  # [CLS], [SEP], [SEP]
 
         if class_label == DataPreprocessorOnline.labels2id['short'] or class_label == DataPreprocessorOnline.labels2id['long']:
-            ans_distance = end_position - start_position
+            ans_distance = min(end_position - start_position, document_len)
 
             doc_start = random.randint(max(start_position - ans_distance, 0), start_position)
             doc_end = doc_start + document_len
@@ -212,7 +215,7 @@ class DataPreprocessorDatasetOnline:
             end = -1
             label = class_label
 
-            doc_start = random.randint(0, len(tokenized_text) - document_len)
+            doc_start = random.randint(0, max(len(tokenized_text) - document_len, 1))
             doc_end = doc_start + document_len
 
         chunk_text = tokenized_text[doc_start: doc_end]
