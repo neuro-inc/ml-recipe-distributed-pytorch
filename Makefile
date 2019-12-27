@@ -36,7 +36,7 @@ CUSTOM_ENV_NAME?=image:neuromation-$(PROJECT_POSTFIX)
 DATA_DIR_STORAGE?=$(PROJECT_PATH_STORAGE)/$(DATA_DIR)
 
 # The type of the training machine (run `neuro config show` to see the list of available types).
-PRESET?=gpu-small
+PRESET?=gpu-large
 
 # HTTP authentication (via cookies) for the job's HTTP link.
 # Set `HTTP_AUTH?=--no-http-auth` to disable any authentication.
@@ -44,7 +44,7 @@ PRESET?=gpu-small
 HTTP_AUTH?=--http-auth
 
 # Command to run training inside the environment. Example:
-TRAINING_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py --data $(DATA_DIR)'"
+TRAINING_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py -c $(CODE_DIR)/configs/train.cfg'"
 PREPROCESS_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/preprocess_data.py -c $(CODE_DIR)/configs/preprocess_all.cfg'"
 
 LOCAL_PORT?=2211

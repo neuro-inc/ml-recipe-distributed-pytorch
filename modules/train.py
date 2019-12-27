@@ -41,7 +41,8 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--n_jobs', type=int, default=2, help='Number of threads in data loader.')
     parser.add_argument('--n_epochs', type=int, default=10, help='Number of epochs.')
 
-    parser.add_argument('--batch_size', type=int, default=128, help='Number of items in batch.')
+    parser.add_argument('--train_batch_size', type=int, default=128, help='Number of items in batch.')
+    parser.add_argument('--test_batch_size', type=int, default=16, help='Number of items in batch.')
     parser.add_argument('--batch_split', type=int, default=1,
                         help='Batch will be split into this number chunks during training.')
 
@@ -53,6 +54,8 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--max_seq_len', type=int, default=384, help='')
     parser.add_argument('--max_question_len', type=int, default=64, help='')
     parser.add_argument('--doc_stride', type=int, default=128, help='')
+
+    parser.add_argument('--debug', action='store_true', help='Debug mode.')
 
     return parser
 
@@ -93,18 +96,18 @@ def main() -> None:
     trainer = Trainer(model, tokenizer, train_dataset, test_dataset,
                       writer=writer,
                       device=device,
-                      train_batch_size=params.batch_size,
-                      test_batch_size=params.batch_size,
+                      train_batch_size=params.train_batch_size,
+                      test_batch_size=params.test_batch_size,
                       batch_split=params.batch_split,
                       n_jobs=params.n_jobs,
                       n_epochs=params.n_epochs,
                       lr=params.lr,
-                      weight_decay=params.weight_decay)
+                      weight_decay=params.weight_decay,
+                      debug=params.debug)
 
     # help functions
     def save_last(*args, **kwargs):
-        state_dict = trainer.state_dict()
-        torch.save(state_dict, os.path.join(params.dump_dir, 'last.ch'))
+        trainer.save_state_dict(os.path.join(params.dump_dir, 'last.ch'))
 
     # class save_best:
     #     def __init__(self):

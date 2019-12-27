@@ -34,7 +34,8 @@ class Trainer:
                  n_jobs=4,
                  n_epochs=0,
                  lr=1e-3,
-                 weight_decay=5e-4):
+                 weight_decay=5e-4,
+                 debug=False):
 
         logger.info(f'Used device: {device}.')
 
@@ -71,6 +72,7 @@ class Trainer:
         self.tokenizer = tokenizer
         self.writer = writer
         self.global_step = 0
+        self.debug = debug
 
     def collate_fun(self, items):
         batch_size = len(items)
@@ -161,6 +163,9 @@ class Trainer:
 
             tqdm_data.set_postfix({k: v() for k, v in avg_losses.items()})
 
+            if self.debug:
+                break
+
     def test(self, epoch_i):
         self._test(epoch_i)
 
@@ -180,6 +185,9 @@ class Trainer:
             avg_losses['loss'].update(loss.item())
 
             tqdm_data.set_postfix({k: v() for k, v in avg_losses.items()})
+
+            if self.debug:
+                break
 
         for k, v in avg_losses.items():
             self.writer.add_scalar(f'test/{k}', v(), global_step=self.global_step)
