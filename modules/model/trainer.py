@@ -1,13 +1,14 @@
 import logging
-from collections import defaultdict
 import os
+from collections import defaultdict
 
+import numpy as np
 import torch
 import torch.nn as nn
+from sklearn import metrics
 # from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm.auto import tqdm
-import numpy as np
 
 logger = logging.getLogger(__file__)
 
@@ -124,12 +125,15 @@ class Trainer:
         return [inputs, labels]
 
     def _loss(self, preds, labels, *, avg_losses=None):
-        start_preds, end_preds, class_preds = preds
-        start_labels, end_labels, class_labels = labels
+        start_preds, end_preds, cls_preds = preds
+        start_labels, end_labels, cls_labels = labels
 
         start_loss = self.start_loss(start_preds, start_labels)
         end_loss = self.end_loss(end_preds, end_labels)
-        cls_loss = self.cls_loss(class_preds, class_labels)
+        cls_loss = self.cls_loss(cls_preds, cls_labels)
+
+        # print('class_preds', cls_preds.size())
+        # print('class_labels', cls_labels.size())
 
         loss = self.w_start * start_loss + self.w_end * end_loss + self.w_cls * cls_loss
 
@@ -203,6 +207,20 @@ class Trainer:
                                      token_type_ids=token_types)
 
             _ = self._loss(pred_logits, labels, avg_losses=avg_losses)
+
+            start_logits, end_logits, cls_logits = (logits.detach().cpu() for logits in pred_logits)
+            start_true, end_true, cls_true = (label.detach().cpu() for label in labels)
+
+            start_pred, end_pred, cls_pred = (torch.max(logits, dim=-1)[1] for logits in (start_logits, end_logits, cls_logits))
+
+            start_idxs = start_true != -1
+            end_idxs = end_true != -1
+
+            avg_losses['s_acc'].update(metrics.accuracy_score(start_true[start_idxs], start_pred[start_idxs]))
+            avg_losses['e_acc'].update(metrics.accuracy_score(end_true[end_idxs], end_pred[end_idxs]))
+            avg_losses['c_acc'].update(metrics.accuracy_score(cls_true, cls_pred))
+
+            # mask = (cls_true == RawDataPreprocessor.labels2id['short']) | (cls_true == RawDataPreprocessor.labels2id['long'])
 
             tqdm_data.set_postfix({k: v() for k, v in avg_losses.items()})
 

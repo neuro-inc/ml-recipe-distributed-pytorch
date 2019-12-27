@@ -224,7 +224,7 @@ develop: _check_setup upload-code upload-config upload-notebooks  ### Run a deve
 		${OPTION_GCP_CREDENTIALS} \
 		${OPTION_WANDB_CREDENTIALS} \
 		--env EXPOSE_SSH=yes \
-		--env JOB_LIFETIME=1d \
+		--env JOB_LIFETIME=0 \
 		$(CUSTOM_ENV_NAME) \
 		"sleep infinity"
 
