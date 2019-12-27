@@ -35,6 +35,9 @@ class Trainer:
                  n_epochs=0,
                  lr=1e-3,
                  weight_decay=5e-4,
+                 w_start=1,
+                 w_end=1,
+                 w_cls=1,
                  debug=False):
 
         logger.info(f'Used device: {device}.')
@@ -66,6 +69,15 @@ class Trainer:
                                                            shuffle=False,
                                                            drop_last=False,
                                                            collate_fn=self.collate_fun)
+
+        self.start_loss = nn.CrossEntropyLoss(ignore_index=-1).to(device)
+        self.end_loss = nn.CrossEntropyLoss(ignore_index=-1).to(device)
+        self.cls_loss = nn.CrossEntropyLoss().to(device)
+
+        self.w_start = w_start
+        self.w_end = w_end
+        self.w_cls = w_cls
+
         self.device = device
         self.batch_split = batch_split
         self.n_epochs = n_epochs
@@ -111,15 +123,24 @@ class Trainer:
 
         return [inputs, labels]
 
-    def _loss(self, preds, labels):
+    def _loss(self, preds, labels, *, avg_losses=None):
         start_preds, end_preds, class_preds = preds
         start_labels, end_labels, class_labels = labels
 
-        start_loss = nn.CrossEntropyLoss(ignore_index=-1)(start_preds, start_labels)
-        end_loss = nn.CrossEntropyLoss(ignore_index=-1)(end_preds, end_labels)
-        class_loss = nn.CrossEntropyLoss()(class_preds, class_labels)
+        start_loss = self.start_loss(start_preds, start_labels)
+        end_loss = self.end_loss(end_preds, end_labels)
+        cls_loss = self.cls_loss(class_preds, class_labels)
 
-        return start_loss + end_loss + class_loss
+        loss = self.w_start * start_loss + self.w_end * end_loss + self.w_cls * cls_loss
+
+        if avg_losses is not None:
+            avg_losses['start_loss'].update(start_loss.item())
+            avg_losses['end_loss'].update(end_loss.item())
+            avg_losses['cls_loss'].update(cls_loss.item())
+
+            avg_losses['loss'].update(loss.item())
+
+        return loss
 
     def train(self, after_epoch_funcs=None):
         after_epoch_funcs = [] if after_epoch_funcs is None else after_epoch_funcs
@@ -145,8 +166,7 @@ class Trainer:
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,
                                      token_type_ids=token_types)
-            loss = self._loss(pred_logits, labels)
-            avg_losses['loss'].update(loss.item())
+            loss = self._loss(pred_logits, labels, avg_losses=avg_losses)
 
             loss = loss / self.batch_split
             loss.backward()
@@ -181,8 +201,8 @@ class Trainer:
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,
                                      token_type_ids=token_types)
-            loss = self._loss(pred_logits, labels)
-            avg_losses['loss'].update(loss.item())
+
+            _ = self._loss(pred_logits, labels, avg_losses=avg_losses)
 
             tqdm_data.set_postfix({k: v() for k, v in avg_losses.items()})
 

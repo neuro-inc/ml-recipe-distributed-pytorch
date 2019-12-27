@@ -56,9 +56,9 @@ def get_parser() -> configargparse.ArgumentParser:
 
     parser.add_argument('--data_path', type=str, required=True, help='')
 
-    parser.add_argument('--max_seq_len', type=int, default=384, help='')
-    parser.add_argument('--max_question_len', type=int, default=64, help='')
-    parser.add_argument('--doc_stride', type=int, default=128, help='')
+    parser.add_argument('--w_start', type=float, default=1, help='')
+    parser.add_argument('--w_end', type=float, default=1, help='')
+    parser.add_argument('--w_cls', type=float, default=1, help='')
 
     parser.add_argument('--debug', action='store_true', help='Debug mode.')
 
@@ -108,6 +108,9 @@ def main() -> None:
                       n_epochs=params.n_epochs,
                       lr=params.lr,
                       weight_decay=params.weight_decay,
+                      w_start=params.w_start,
+                      w_end=params.w_end,
+                      w_cls=params.w_cls,
                       debug=params.debug)
 
     if params.last is not None:
