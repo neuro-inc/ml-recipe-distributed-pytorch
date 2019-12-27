@@ -27,12 +27,17 @@ def set_seed(seed: int = 0) -> None:
 
 
 def get_parser() -> configargparse.ArgumentParser:
+    def cast2(type_):
+        return lambda x: type_(x) if x != 'None' else None
+
     parser = configargparse.ArgumentParser(description='Midi-generator training script.')
 
     parser.add_argument('-c', '--config_file', required=False, is_config_file=True, help='Config file path.')
 
     parser.add_argument('--dump_dir', type=Path, default='../results', help='Dump path.')
     parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name.')
+
+    parser.add_argument('--last', type=cast2(str), default=None, help='Restored checkpoint.')
 
     parser.add_argument('--gpu', action='store_true', help='Use gpu to train model.')
 
@@ -105,9 +110,12 @@ def main() -> None:
                       weight_decay=params.weight_decay,
                       debug=params.debug)
 
+    if params.last is not None:
+        trainer.load_state_dict(params.last)
+
     # help functions
     def save_last(*args, **kwargs):
-        trainer.save_state_dict(os.path.join(params.dump_dir, 'last.ch'))
+        trainer.save_state_dict(params.dump_dir / params.experiment_name / 'last.ch')
 
     # class save_best:
     #     def __init__(self):

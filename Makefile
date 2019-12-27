@@ -44,8 +44,8 @@ PRESET?=gpu-large
 HTTP_AUTH?=--http-auth
 
 # Command to run training inside the environment. Example:
-TRAINING_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py -c $(CODE_DIR)/configs/train.cfg'"
-PREPROCESS_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/preprocess_data.py -c $(CODE_DIR)/configs/preprocess_all.cfg'"
+TRAINING_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py -c $(CODE_DIR)/configs/$(CONFIG_NAME)'"
+PREPROCESS_COMMAND="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/preprocess_data.py -c $(CODE_DIR)/configs/$(CONFIG_NAME)'"
 
 LOCAL_PORT?=2211
 
@@ -323,7 +323,7 @@ tensorboard: _check_setup  ### Run a job with TensorBoard and open UI in the def
 		--env JOB_TIMEOUT=1d \
 		--volume $(PROJECT_PATH_STORAGE)/$(RESULTS_DIR):$(PROJECT_PATH_ENV)/$(RESULTS_DIR):ro \
 		$(CUSTOM_ENV_NAME) \
-		'tensorboard --host=0.0.0.0 --logdir=$(PROJECT_PATH_ENV)/$(RESULTS_DIR)'
+		'tensorboard --host=0.0.0.0 --logdir=$(PROJECT_PATH_ENV)/$(RESULTS_DIR)/board'
 
 .PHONY: kill-tensorboard
 kill-tensorboard:  ### Terminate the job with TensorBoard

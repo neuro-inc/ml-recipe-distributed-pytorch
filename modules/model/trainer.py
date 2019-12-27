@@ -193,6 +193,10 @@ class Trainer:
             self.writer.add_scalar(f'test/{k}', v(), global_step=self.global_step)
 
     def save_state_dict(self, path_):
+        if self.debug:
+            logger.info(f'Model was not saved to {path_} because of debug mode.')
+            return
+
         model_dict = self.model.state_dict()
 
         state_dict = {'model': model_dict,
@@ -203,10 +207,13 @@ class Trainer:
         logger.info(f'State dict was saved to {path_}.')
 
     def load_state_dict(self, path_):
-        if os.path.exists(path_):
-            state_dict = torch.load(path_, map_location=self.device)
+        if not os.path.exists(path_):
+            logger.warning(f'Checkpoint {path_} does not exist.')
+            return
 
-            self.global_step = state_dict['global_step']
-            self.model.load_state_dict(state_dict['model'])
+        state_dict = torch.load(path_, map_location=self.device)
 
-            logger.info(f'Model weights were loaded from {path_} checkpoint.')
+        self.global_step = state_dict['global_step']
+        self.model.load_state_dict(state_dict['model'])
+
+        logger.info(f'Model weights were loaded from {path_} checkpoint.')
