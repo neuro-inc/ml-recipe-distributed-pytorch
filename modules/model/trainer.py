@@ -9,6 +9,7 @@ from sklearn import metrics
 # from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler
 from tqdm.auto import tqdm
+from transformers import AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__file__)
 
@@ -39,6 +40,7 @@ class Trainer:
                  w_start=1,
                  w_end=1,
                  w_cls=1,
+                 warmup_coef=0.01,
                  train_weights=None,
                  debug=False):
 
@@ -52,7 +54,13 @@ class Trainer:
             {'params': [p for n, p in optimizer_parameters if not any(nd in n for nd in no_decay)], 'weight_decay': weight_decay},
             {'params': [p for n, p in optimizer_parameters if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}]
 
-        self.optimizer = torch.optim.Adam(optimizer_grouped_parameters, lr=lr)
+        # self.optimizer = torch.optim.Adam(optimizer_grouped_parameters, lr=lr)
+        num_training_steps = n_epochs * len(train_dataset) // train_batch_size // batch_split
+        num_warmup_steps = num_training_steps * warmup_coef
+
+        self.optimizer = AdamW(optimizer_grouped_parameters, lr=lr, correct_bias=False)
+        self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=num_warmup_steps,
+                                                         num_training_steps=num_training_steps)
 
         logger.info(f'Train Dataset len: {len(train_dataset)}.')
         logger.info(f'Test Dataset len: {len(test_dataset)}.')
@@ -89,6 +97,9 @@ class Trainer:
         self.writer = writer
         self.global_step = 0
         self.debug = debug
+
+    def get_lr(self):
+        return self.optimizer.param_groups[0]['lr']
 
     def collate_fun(self, items):
         batch_size = len(items)
@@ -178,17 +189,21 @@ class Trainer:
             loss = loss / self.batch_split
             loss.backward()
 
+            avg_losses['lr'] = self.get_lr()
+
             if (i + 1) % self.batch_split == 0:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10.0)
                 self.optimizer.step()
+                self.scheduler.step()
                 self.optimizer.zero_grad()
 
                 for k, v in avg_losses.items():
-                    self.writer.add_scalar(f'train/{k}', v(), global_step=self.global_step)
+                    self.writer.add_scalar(f'train/{k}', v() if isinstance(v, AverageMeter) else v,
+                                           global_step=self.global_step)
 
                 self.global_step += 1
 
-            tqdm_data.set_postfix({k: v() for k, v in avg_losses.items()})
+            tqdm_data.set_postfix({k: v() if isinstance(v, AverageMeter) else v for k, v in avg_losses.items()})
 
             if self.debug:
                 break

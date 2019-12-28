@@ -60,6 +60,8 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--w_end', type=float, default=1, help='')
     parser.add_argument('--w_cls', type=float, default=1, help='')
 
+    parser.add_argument('--warmup_coef', type=float, default=0.01, help='')
+
     parser.add_argument('--debug', action='store_true', help='Debug mode.')
 
     return parser
