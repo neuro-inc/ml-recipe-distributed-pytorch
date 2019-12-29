@@ -200,7 +200,7 @@ class DataPreprocessorDatasetOnline:
 
         document_len = self.max_seq_len - len(tokenized_question) - 3  # [CLS], [SEP], [SEP]
 
-        if class_label == DataPreprocessorOnline.labels2id['short'] or class_label == DataPreprocessorOnline.labels2id['long']:
+        if class_label == 'short' or class_label == 'long':
             ans_distance = min(end_position - start_position, document_len)
 
             doc_start = random.randint(max(start_position - ans_distance, 0), start_position)

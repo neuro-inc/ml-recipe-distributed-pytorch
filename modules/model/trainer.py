@@ -14,6 +14,19 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 logger = logging.getLogger(__file__)
 
 
+def initialize_apex(model, optimizer, apex_level=None, apex_verbosity=0):
+    if apex_level is not None:
+        try:
+            from apex import amp
+        except ImportError:
+            raise ImportError('Install Apex to train model with mixed precision.')
+
+        model, optimizer = amp.initialize(model, optimizer, opt_level=apex_level,
+                                          verbosity=apex_verbosity)
+
+    return model, optimizer
+
+
 class AverageMeter:
     def __init__(self):
         self._counter = 0
@@ -42,6 +55,8 @@ class Trainer:
                  w_cls=1,
                  warmup_coef=0.01,
                  train_weights=None,
+                 apex_level=None,
+                 apex_verbosity=1,
                  debug=False):
 
         logger.info(f'Used device: {device}.')
@@ -54,13 +69,19 @@ class Trainer:
             {'params': [p for n, p in optimizer_parameters if not any(nd in n for nd in no_decay)], 'weight_decay': weight_decay},
             {'params': [p for n, p in optimizer_parameters if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}]
 
-        # self.optimizer = torch.optim.Adam(optimizer_grouped_parameters, lr=lr)
         num_training_steps = n_epochs * len(train_dataset) // train_batch_size // batch_split
         num_warmup_steps = num_training_steps * warmup_coef
 
         self.optimizer = AdamW(optimizer_grouped_parameters, lr=lr, correct_bias=False)
         self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=num_warmup_steps,
                                                          num_training_steps=num_training_steps)
+
+        self.model, self.optimizer = initialize_apex(self.model,  self.optimizer,
+                                                     apex_level=apex_level, apex_verbosity=apex_verbosity)
+
+        self.apex_level = apex_level
+        self.apex_verbosity = apex_verbosity
+        logger.info(f'APEX optimization level: {self.apex_level}')
 
         logger.info(f'Train Dataset len: {len(train_dataset)}.')
         logger.info(f'Test Dataset len: {len(test_dataset)}.')
@@ -129,9 +150,6 @@ class Trainer:
 
         label_ids = [item.label_id for item in items]
 
-        #     start_positions = np.where(start_positions >= max_len, -1, start_positions)
-        #     end_positions = np.where(end_positions >= max_len, -1, end_positions)
-
         labels = [torch.LongTensor(start_ids).to(self.device),
                   torch.LongTensor(end_ids).to(self.device),
                   torch.LongTensor(label_ids).to(self.device)]
@@ -146,9 +164,6 @@ class Trainer:
         end_loss = self.end_loss(end_preds, end_labels)
         cls_loss = self.cls_loss(cls_preds, cls_labels)
 
-        # print('class_preds', cls_preds.size())
-        # print('class_labels', cls_labels.size())
-
         loss = self.w_start * start_loss + self.w_end * end_loss + self.w_cls * cls_loss
 
         if avg_losses is not None:
@@ -159,6 +174,19 @@ class Trainer:
             avg_losses['loss'].update(loss.item())
 
         return loss
+
+    def _backward(self, loss):
+
+        if self.apex_level is not None:
+            try:
+                from apex import amp
+            except ImportError:
+                raise ImportError('Install Apex to train model with mixed precision.')
+
+            with amp.scale_loss(loss, self.optimizer) as scale_loss:
+                scale_loss.backward()
+        else:
+            loss.backward()
 
     def train(self, after_epoch_funcs=None):
         after_epoch_funcs = [] if after_epoch_funcs is None else after_epoch_funcs
@@ -180,14 +208,14 @@ class Trainer:
         tqdm_data = tqdm(self.train_dataloader, desc=f'Train (epoch #{epoch_i} / {self.n_epochs})')
 
         for i, ((input_ids, attention_mask, token_types), labels) in enumerate(tqdm_data):
-            # print(labels[-1])
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,
                                      token_type_ids=token_types)
             loss = self._loss(pred_logits, labels, avg_losses=avg_losses)
 
             loss = loss / self.batch_split
-            loss.backward()
+
+            self._backward(loss)
 
             avg_losses['lr'] = self.get_lr()
 
