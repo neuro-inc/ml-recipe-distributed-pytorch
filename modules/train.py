@@ -65,6 +65,8 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--apex_level', type=str, default=None, help='')
     parser.add_argument('--apex_verbosity', type=int, default=1, help='')
 
+    parser.add_argument('--drop_optimizer', action='store_true', help='')
+
     parser.add_argument('--debug', action='store_true', help='Debug mode.')
 
     return parser
@@ -96,7 +98,7 @@ def show_params(params: configargparse.Namespace) -> None:
 def main() -> None:
     params = get_parser().parse_args()
     show_params(params)
-    os.makedirs(params.dump_dir, exist_ok=True)
+    os.makedirs(params.dump_dir / params.experiment_name, exist_ok=True)
 
     set_seed(params.seed)
 
@@ -129,6 +131,7 @@ def main() -> None:
                       apex_level=params.apex_level,
                       apex_verbosity=params.apex_verbosity,
                       train_weights=train_weights,
+                      drop_optimizer=params.drop_optimizer,
                       debug=params.debug)
 
     if params.last is not None:
@@ -154,9 +157,12 @@ def main() -> None:
     #                         f'and equals to {self.value}')
     #             state_dict = trainer.state_dict()
     #             torch.save(state_dict, join(trainer_config.dump_dir, 'best.ch'))
-
-    trainer.train(after_epoch_funcs=[save_last, trainer.test])
-    trainer.save_state_dict(params.dump_dir / f'{params.experiment_name}.ch')
+    try:
+        trainer.train(after_epoch_funcs=[save_last, trainer.test])
+    except KeyboardInterrupt:
+        logger.error('Training process was interrupted.')
+        trainer.save_state_dict(params.dump_dir / params.experiment_name / 'interrupt.ch')
+    # trainer.save_state_dict(params.dump_dir / f'{params.experiment_name}.ch')
 
 
 if __name__ == '__main__':

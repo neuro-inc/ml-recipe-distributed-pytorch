@@ -54,9 +54,10 @@ class Trainer:
                  w_end=1,
                  w_cls=1,
                  warmup_coef=0.01,
-                 train_weights=None,
                  apex_level=None,
                  apex_verbosity=1,
+                 drop_optimizer=False,
+                 train_weights=None,
                  debug=False):
 
         logger.info(f'Used device: {device}.')
@@ -118,6 +119,7 @@ class Trainer:
         self.writer = writer
         self.global_step = 0
         self.debug = debug
+        self.drop_optimizer = drop_optimizer
 
     def get_lr(self):
         return self.optimizer.param_groups[0]['lr']
@@ -282,8 +284,12 @@ class Trainer:
             return
 
         model_dict = self.model.state_dict()
+        optimizer_dict = self.optimizer.state_dict()
+        scheduler_dict = self.scheduler.state_dict()
 
         state_dict = {'model': model_dict,
+                      'optimizer': optimizer_dict,
+                      'scheduler': scheduler_dict,
                       'global_step': self.global_step}
 
         torch.save(state_dict, path_)
@@ -297,7 +303,13 @@ class Trainer:
 
         state_dict = torch.load(path_, map_location=self.device)
 
-        self.global_step = state_dict['global_step']
         self.model.load_state_dict(state_dict['model'])
+        self.global_step = state_dict['global_step']
 
         logger.info(f'Model weights were loaded from {path_} checkpoint.')
+
+        if not self.drop_optimizer:
+            self.optimizer.load_state_dict(state_dict['optimizer'])
+            self.scheduler.load_state_dict(state_dict['scheduler'])
+
+            logger.info(f'Optimizer and scheduler also were restored from {path_} checkpoint.')
