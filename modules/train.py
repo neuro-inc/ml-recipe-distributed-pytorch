@@ -9,19 +9,19 @@ import torch
 from model.dataset_online import DataPreprocessorOnline, DataPreprocessorDatasetOnline
 from model.model import BertForQuestionAnswering
 from model.trainer import Trainer
-from torch.utils.tensorboard import SummaryWriter
 from transformers import BertTokenizer
 
 
-def set_seed(seed: int = 0) -> None:
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
-    torch.manual_seed(seed)
+def set_seed(logger, seed=None):
+    if seed is not None:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = True
+        torch.manual_seed(seed)
 
-    random.seed(seed)
-    np.random.seed(seed)
+        random.seed(seed)
+        np.random.seed(seed)
 
-    logger.info(f'Random seed was set to {seed}.')
+        logger.info(f'Random seed was set to {seed}.')
 
 
 def get_parser() -> configargparse.ArgumentParser:
@@ -39,7 +39,7 @@ def get_parser() -> configargparse.ArgumentParser:
 
     parser.add_argument('--gpu', action='store_true', help='Use gpu to train model.')
 
-    parser.add_argument('--seed', type=int, default=0, help='Seed for random state.')
+    parser.add_argument('--seed', type=cast2(int), default=None, help='Seed for random state.')
 
     parser.add_argument('--n_jobs', type=int, default=2, help='Number of threads in data loader.')
     parser.add_argument('--n_epochs', type=int, default=10, help='Number of epochs.')
@@ -60,14 +60,22 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--w_end', type=float, default=1, help='')
     parser.add_argument('--w_cls', type=float, default=1, help='')
 
+    parser.add_argument('--max_grad_norm', type=float, default=1, help='')
+
     parser.add_argument('--warmup_coef', type=float, default=0.01, help='')
 
-    parser.add_argument('--apex_level', type=str, default=None, help='')
+    parser.add_argument('--apex_level', type=cast2(str), default=None, help='')
     parser.add_argument('--apex_verbosity', type=int, default=1, help='')
 
     parser.add_argument('--drop_optimizer', action='store_true', help='')
 
     parser.add_argument('--debug', action='store_true', help='Debug mode.')
+
+    parser.add_argument('--local_rank', type=int, default=-1, help='')
+
+    parser.add_argument('--dist_backend', type=str, default='nccl', help='')
+    parser.add_argument('--dist_init_method', type=str, default='env://', help='')
+    parser.add_argument('--dist_world_size', type=int, default=1, help='')
 
     return parser
 
@@ -89,33 +97,56 @@ def get_datasets(params, tokenizer):
     return train_dataset, test_dataset, train_weights
 
 
-def show_params(params: configargparse.Namespace) -> None:
+def show_params(params, logger):
     logger.info('Input parameters:')
     for k in sorted(params.__dict__.keys()):
         logger.info(f'\t{k}: {getattr(params, k)}')
 
 
+def run_worker(device, params):
+    pass
+
+
 def main() -> None:
     params = get_parser().parse_args()
-    show_params(params)
+
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO if params.local_rank in [-1, 0] else logging.WARN)
+
+    logging.getLogger('transformers').setLevel('CRITICAL')
+    logger = logging.getLogger(__file__)
+
+    show_params(params, logger)
     os.makedirs(params.dump_dir / params.experiment_name, exist_ok=True)
 
-    set_seed(params.seed)
+    set_seed(logger, params.seed)
 
-    device = torch.device('cuda') if torch.cuda.is_available() and params.gpu else torch.device('cpu')
+    if params.local_rank == -1 and params.gpu:
+        device = torch.device('cuda') if torch.cuda.is_available() and params.gpu else torch.device('cpu')
+    else:
+        # torch.cuda.set_device(params.local_rank)
+        device = torch.device('cuda') #, params.local_rank)
+        torch.distributed.init_process_group(backend=params.dist_backend, init_method=params.dist_init_method,
+                                             world_size=params.dist_world_size, rank=params.local_rank)
 
     bert_model = 'bert-base-uncased'
     do_lower_case = 'uncased' in bert_model
 
+    # if params.local_rank == 0:
+    #     torch.distributed.barrier()
+
     tokenizer = BertTokenizer.from_pretrained(bert_model, do_lower_case=do_lower_case)
+    model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(DataPreprocessorOnline.labels2id))
+
+    # if params.local_rank == 0:
+    #     torch.distributed.barrier()
+
     train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer)
 
-    model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(train_dataset.labels2id))
-
-    writer = SummaryWriter(log_dir=params.dump_dir / f'board/{params.experiment_name}')
-
     trainer = Trainer(model, tokenizer, train_dataset, test_dataset,
-                      writer=writer,
+                      # writer=writer,
+                      writer_dir=params.dump_dir / f'board/{params.experiment_name}',
                       device=device,
                       train_batch_size=params.train_batch_size,
                       test_batch_size=params.test_batch_size,
@@ -132,6 +163,7 @@ def main() -> None:
                       apex_verbosity=params.apex_verbosity,
                       train_weights=train_weights,
                       drop_optimizer=params.drop_optimizer,
+                      max_grad_norm=params.max_grad_norm,
                       debug=params.debug)
 
     if params.last is not None:
@@ -140,6 +172,9 @@ def main() -> None:
     # help functions
     def save_last(*args, **kwargs):
         trainer.save_state_dict(params.dump_dir / params.experiment_name / 'last.ch')
+
+    def save_each(epoch_i):
+        trainer.save_state_dict(params.dump_dir / params.experiment_name / f'epoch_{epoch_i}.ch')
 
     # class save_best:
     #     def __init__(self):
@@ -158,17 +193,11 @@ def main() -> None:
     #             state_dict = trainer.state_dict()
     #             torch.save(state_dict, join(trainer_config.dump_dir, 'best.ch'))
     try:
-        trainer.train(after_epoch_funcs=[save_last, trainer.test])
+        trainer.train(after_epoch_funcs=[save_last, save_each, trainer.test])
     except KeyboardInterrupt:
         logger.error('Training process was interrupted.')
         trainer.save_state_dict(params.dump_dir / params.experiment_name / 'interrupt.ch')
-    # trainer.save_state_dict(params.dump_dir / f'{params.experiment_name}.ch')
 
 
 if __name__ == '__main__':
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                        datefmt='%m/%d/%Y %H:%M:%S', level=logging.INFO)
-    logging.getLogger('transformers').setLevel('CRITICAL')
-    logger = logging.getLogger(__file__)
-
     main()

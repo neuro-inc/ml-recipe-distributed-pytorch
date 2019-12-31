@@ -7,7 +7,8 @@ import torch
 import torch.nn as nn
 from sklearn import metrics
 # from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler
+from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler, DistributedSampler
+from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import AdamW, get_linear_schedule_with_warmup
 
@@ -41,7 +42,7 @@ class AverageMeter:
 
 
 class Trainer:
-    def __init__(self, model, tokenizer, train_dataset, test_dataset, writer, *,
+    def __init__(self, model, tokenizer, train_dataset, test_dataset, writer_dir, *,
                  device=torch.device('cuda'),
                  train_batch_size=32,
                  test_batch_size=32,
@@ -58,7 +59,9 @@ class Trainer:
                  apex_verbosity=1,
                  drop_optimizer=False,
                  train_weights=None,
-                 debug=False):
+                 debug=False,
+                 max_grad_norm=1,
+                 local_rank=-1):
 
         logger.info(f'Used device: {device}.')
 
@@ -80,6 +83,11 @@ class Trainer:
         self.model, self.optimizer = initialize_apex(self.model,  self.optimizer,
                                                      apex_level=apex_level, apex_verbosity=apex_verbosity)
 
+        if local_rank != -1:
+            self.model = torch.nn.parallel.DistributedDataParallel(
+                self.model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True
+            )
+
         self.apex_level = apex_level
         self.apex_verbosity = apex_verbosity
         logger.info(f'APEX optimization level: {self.apex_level}')
@@ -87,8 +95,11 @@ class Trainer:
         logger.info(f'Train Dataset len: {len(train_dataset)}.')
         logger.info(f'Test Dataset len: {len(test_dataset)}.')
 
-        train_sampler = RandomSampler(train_dataset) if train_weights is None else WeightedRandomSampler(train_weights,
-                                                                                                         len(train_weights))
+        if local_rank == -1:
+            train_sampler = RandomSampler(train_dataset) if train_weights is None \
+                else WeightedRandomSampler(train_weights, len(train_weights))
+        else:
+            train_sampler = DistributedSampler(train_dataset)
 
         self.train_dataloader = torch.utils.data.DataLoader(train_dataset,
                                                             batch_size=int(train_batch_size // batch_split),
@@ -112,14 +123,18 @@ class Trainer:
         self.w_end = w_end
         self.w_cls = w_cls
 
+        self.max_grad_norm = max_grad_norm
+
         self.device = device
+        self.local_rank = local_rank
         self.batch_split = batch_split
         self.n_epochs = n_epochs
         self.tokenizer = tokenizer
-        self.writer = writer
         self.global_step = 0
         self.debug = debug
         self.drop_optimizer = drop_optimizer
+
+        self.writer = SummaryWriter(log_dir=writer_dir) if self.local_rank in [-1, 0] else None
 
     def get_lr(self):
         return self.optimizer.param_groups[0]['lr']
@@ -178,7 +193,6 @@ class Trainer:
         return loss
 
     def _backward(self, loss):
-
         if self.apex_level is not None:
             try:
                 from apex import amp
@@ -201,6 +215,27 @@ class Trainer:
             self._train(epoch_i)
             run_after_funcs()
 
+    @staticmethod
+    def _update_console(tqdm_data, losses):
+        tqdm_data.set_postfix({k: v() if isinstance(v, AverageMeter) else v for k, v in losses.items()})
+
+    def _update_writer(self, losses, *, prefix=None):
+        if self.local_rank in [-1, 0]:
+            for k, v in losses.items():
+                self.writer.add_scalar(f'{prefix}/{k}', v() if isinstance(v, AverageMeter) else v,
+                                       global_step=self.global_step)
+
+    def _clip_grad_norm(self):
+        if self.apex_level is not None:
+            try:
+                from apex import amp
+            except ImportError:
+                raise ImportError('Install Apex to train model with mixed precision.')
+
+            torch.nn.utils.clip_grad_norm_(amp.master_params(self.optimizer), self.max_grad_norm)
+        else:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+
     def _train(self, epoch_i):
         self.model.train()
         self.optimizer.zero_grad()
@@ -215,31 +250,31 @@ class Trainer:
                                      token_type_ids=token_types)
             loss = self._loss(pred_logits, labels, avg_losses=avg_losses)
 
-            loss = loss / self.batch_split
+            loss = loss / self.batch_split if self.batch_split > 1 else loss
 
             self._backward(loss)
 
             avg_losses['lr'] = self.get_lr()
 
             if (i + 1) % self.batch_split == 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10.0)
+                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10.0)
+
                 self.optimizer.step()
                 self.scheduler.step()
                 self.optimizer.zero_grad()
 
-                for k, v in avg_losses.items():
-                    self.writer.add_scalar(f'train/{k}', v() if isinstance(v, AverageMeter) else v,
-                                           global_step=self.global_step)
+                self._update_writer(avg_losses, prefix='train')
 
                 self.global_step += 1
 
-            tqdm_data.set_postfix({k: v() if isinstance(v, AverageMeter) else v for k, v in avg_losses.items()})
+            Trainer._update_console(tqdm_data, avg_losses)
 
             if self.debug:
                 break
 
     def test(self, epoch_i):
-        self._test(epoch_i)
+        if self.local_rank == -1:
+            self._test(epoch_i)
 
     def _test(self, epoch_i):
         self.model.eval()
@@ -270,15 +305,17 @@ class Trainer:
 
             # mask = (cls_true == RawDataPreprocessor.labels2id['short']) | (cls_true == RawDataPreprocessor.labels2id['long'])
 
-            tqdm_data.set_postfix({k: v() for k, v in avg_losses.items()})
+            Trainer._update_console(tqdm_data, avg_losses)
 
             if self.debug:
                 break
 
-        for k, v in avg_losses.items():
-            self.writer.add_scalar(f'test/{k}', v(), global_step=self.global_step)
+        self._update_writer(avg_losses, prefix='test')
 
     def save_state_dict(self, path_):
+        if self.local_rank not in [-1, 0]:
+            return
+
         if self.debug:
             logger.info(f'Model was not saved to {path_} because of debug mode.')
             return
@@ -297,6 +334,9 @@ class Trainer:
         logger.info(f'State dict was saved to {path_}.')
 
     def load_state_dict(self, path_):
+        if self.local_rank not in [-1, 0]:
+            return
+
         if not os.path.exists(path_):
             logger.warning(f'Checkpoint {path_} does not exist.')
             return

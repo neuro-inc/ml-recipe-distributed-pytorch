@@ -36,7 +36,7 @@ CUSTOM_ENV_NAME?=image:neuromation-$(PROJECT_POSTFIX)
 DATA_DIR_STORAGE?=$(PROJECT_PATH_STORAGE)/$(DATA_DIR)
 
 # The type of the training machine (run `neuro config show` to see the list of available types).
-PRESET?=gpu-large
+PRESET?=gpu-small
 
 # HTTP authentication (via cookies) for the job's HTTP link.
 # Set `HTTP_AUTH?=--no-http-auth` to disable any authentication.
@@ -210,12 +210,33 @@ wandb-check-auth:  ### Check if the file Weights and Biases authentication file 
 			false; }
 
 ##### JOBS #####
+RUN?=base
 
 .PHONY: develop
 develop: _check_setup upload-code upload-config upload-notebooks  ### Run a development job
 	$(NEURO) run \
-		--name $(DEVELOP_JOB) \
+		--name $(DEVELOP_JOB)-$(RUN) \
 		--preset $(PRESET) \
+		--detach \
+		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):rw \
+		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):rw \
+		--volume $(PROJECT_PATH_STORAGE)/$(CONFIG_DIR):$(PROJECT_PATH_ENV)/$(CONFIG_DIR):ro \
+		--volume $(PROJECT_PATH_STORAGE)/$(RESULTS_DIR):$(PROJECT_PATH_ENV)/$(RESULTS_DIR):rw \
+		${OPTION_GCP_CREDENTIALS} \
+		${OPTION_WANDB_CREDENTIALS} \
+		--env EXPOSE_SSH=yes \
+		--env JOB_LIFETIME=0 \
+		$(CUSTOM_ENV_NAME) \
+		"sleep infinity"
+
+.PHONY: develop-submit
+develop-submit: _check_setup upload-code upload-config upload-notebooks  ### Run a development job
+	$(NEURO) submit \
+	    --gpu 2 \
+        --gpu-model nvidia-tesla-k80 \
+        --cpu 2 \
+        --memory 64G \
+		--name $(DEVELOP_JOB)-$(RUN) \
 		--detach \
 		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):rw \
@@ -230,7 +251,7 @@ develop: _check_setup upload-code upload-config upload-notebooks  ### Run a deve
 
 .PHONY: connect-develop
 connect-develop:  ### Connect to the remote shell running on the development job
-	$(NEURO) exec --no-key-check $(DEVELOP_JOB) bash
+	$(NEURO) exec --no-key-check $(DEVELOP_JOB)-$(RUN) bash
 
 .PHONY: logs-develop
 logs-develop:  ### Connect to the remote shell running on the development job
