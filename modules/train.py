@@ -6,22 +6,11 @@ from pathlib import Path
 import configargparse
 import numpy as np
 import torch
+import torch.multiprocessing as mp
 from model.dataset_online import DataPreprocessorOnline, DataPreprocessorDatasetOnline
 from model.model import BertForQuestionAnswering
 from model.trainer import Trainer
 from transformers import BertTokenizer
-
-
-def set_seed(logger, seed=None):
-    if seed is not None:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = True
-        torch.manual_seed(seed)
-
-        random.seed(seed)
-        np.random.seed(seed)
-
-        logger.info(f'Random seed was set to {seed}.')
 
 
 def get_parser() -> configargparse.ArgumentParser:
@@ -74,10 +63,32 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--local_rank', type=int, default=-1, help='')
 
     parser.add_argument('--dist_backend', type=str, default='nccl', help='')
-    parser.add_argument('--dist_init_method', type=str, default='env://', help='')
+    parser.add_argument('--dist_init_method', type=str, default='tcp://127.0.0.1:9080', help='')
     parser.add_argument('--dist_world_size', type=int, default=1, help='')
 
     return parser
+
+
+def set_seed(seed=None):
+    if seed is not None:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = True
+        torch.manual_seed(seed)
+
+        random.seed(seed)
+        np.random.seed(seed)
+
+        logger.info(f'Random seed was set to {seed}. It can affect speed of training.')
+
+
+def get_model(params):
+    bert_model = 'bert-base-uncased'
+    do_lower_case = 'uncased' in bert_model
+
+    tokenizer = BertTokenizer.from_pretrained(bert_model, do_lower_case=do_lower_case)
+    model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(DataPreprocessorOnline.labels2id))
+
+    return model, tokenizer
 
 
 def get_datasets(params, tokenizer):
@@ -97,55 +108,34 @@ def get_datasets(params, tokenizer):
     return train_dataset, test_dataset, train_weights
 
 
-def show_params(params, logger):
+def show_params(params):
     logger.info('Input parameters:')
     for k in sorted(params.__dict__.keys()):
         logger.info(f'\t{k}: {getattr(params, k)}')
 
 
 def run_worker(device, params):
-    pass
+    if params.distributed:
+        if params.local_rank == -1:
+            raise AttributeError('Specify local rank.')
 
+        if params.dist_multiprocessing:
+            params.local_rank = params.local_rank * params.dist_ngpus_per_node + device
 
-def main() -> None:
-    params = get_parser().parse_args()
-
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                        datefmt='%m/%d/%Y %H:%M:%S',
-                        level=logging.INFO if params.local_rank in [-1, 0] else logging.WARN)
-
-    logging.getLogger('transformers').setLevel('CRITICAL')
-    logger = logging.getLogger(__file__)
-
-    show_params(params, logger)
-    os.makedirs(params.dump_dir / params.experiment_name, exist_ok=True)
-
-    set_seed(logger, params.seed)
-
-    if params.local_rank == -1 and params.gpu:
-        device = torch.device('cuda') if torch.cuda.is_available() and params.gpu else torch.device('cpu')
-    else:
-        # torch.cuda.set_device(params.local_rank)
-        device = torch.device('cuda') #, params.local_rank)
         torch.distributed.init_process_group(backend=params.dist_backend, init_method=params.dist_init_method,
                                              world_size=params.dist_world_size, rank=params.local_rank)
 
-    bert_model = 'bert-base-uncased'
-    do_lower_case = 'uncased' in bert_model
+        # todo: incorrect without multiprocessing?
+        torch.cuda.set_device(device)
+        device = torch.device('cuda', params.local_rank)
 
-    # if params.local_rank == 0:
-    #     torch.distributed.barrier()
+    logger = get_logger(level=logging.INFO if params.local_rank in [-1, 0] else logging.WARN)
+    logger.info(f'Used device in main process: {device}')
 
-    tokenizer = BertTokenizer.from_pretrained(bert_model, do_lower_case=do_lower_case)
-    model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(DataPreprocessorOnline.labels2id))
-
-    # if params.local_rank == 0:
-    #     torch.distributed.barrier()
-
+    model, tokenizer = get_model(params)
     train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer)
 
     trainer = Trainer(model, tokenizer, train_dataset, test_dataset,
-                      # writer=writer,
                       writer_dir=params.dump_dir / f'board/{params.experiment_name}',
                       device=device,
                       train_batch_size=params.train_batch_size,
@@ -192,6 +182,7 @@ def main() -> None:
     #                         f'and equals to {self.value}')
     #             state_dict = trainer.state_dict()
     #             torch.save(state_dict, join(trainer_config.dump_dir, 'best.ch'))
+
     try:
         trainer.train(after_epoch_funcs=[save_last, save_each, trainer.test])
     except KeyboardInterrupt:
@@ -199,5 +190,40 @@ def main() -> None:
         trainer.save_state_dict(params.dump_dir / params.experiment_name / 'interrupt.ch')
 
 
+def main() -> None:
+    params = get_parser().parse_args()
+
+    show_params(params)
+    os.makedirs(params.dump_dir / params.experiment_name, exist_ok=True)
+
+    set_seed(params.seed)
+
+    # todo: wrong rank if nodes have different gpu number?
+    params.dist_ngpus_per_node = torch.cuda.device_count()
+    params.dist_world_size *= params.dist_ngpus_per_node
+    params.distributed = params.dist_world_size > 1
+
+    logger.info(f'Distributed: {params.distributed}. Distributed multiprocessing: {params.dist_multiprocessing}. '
+                f'World size: {params.dist_world_size}, #GPU: {params.dist_ngpus_per_node}.')
+
+    if params.dist_ngpus_per_node > 1:
+        mp.spawn(run_worker, nprocs=params.dist_ngpus_per_node, args=(params,))
+    else:
+        device = torch.device('cuda') if torch.cuda.is_available() and params.gpu else torch.device('cpu')
+        run_worker(device, params)
+
+
+def get_logger(level=logging.INFO):
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=level)
+
+    logging.getLogger('transformers').setLevel('CRITICAL')
+
+    return logging.getLogger(__file__)
+
+
 if __name__ == '__main__':
+    logger = get_logger()
+
     main()
