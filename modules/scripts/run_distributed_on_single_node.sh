@@ -1,4 +1,3 @@
-# export NUM_GPUS=2
 # export OMP_NUM_THREADS (int)(multiprocessing.cpu_count() / nproc_per_node)
 
-python -m torch.distributed.launch --nproc_per_node=$NUM_GPUS "$@"
+python ./modules/train.py --local_rank 0 --dist_backend nccl --dist_init_method tcp://127.0.0.1:9080 "$@"

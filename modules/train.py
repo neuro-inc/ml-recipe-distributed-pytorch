@@ -61,7 +61,6 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--debug', action='store_true', help='Debug mode.')
 
     parser.add_argument('--local_rank', type=int, default=-1, help='')
-
     parser.add_argument('--dist_backend', type=str, default='nccl', help='')
     parser.add_argument('--dist_init_method', type=str, default='tcp://127.0.0.1:9080', help='')
     parser.add_argument('--dist_world_size', type=int, default=1, help='')
@@ -119,18 +118,20 @@ def run_worker(device, params):
         if params.local_rank == -1:
             raise AttributeError('Specify local rank.')
 
-        if params.dist_multiprocessing:
+        if params.distributed_mp:
             params.local_rank = params.local_rank * params.dist_ngpus_per_node + device
 
         torch.distributed.init_process_group(backend=params.dist_backend, init_method=params.dist_init_method,
                                              world_size=params.dist_world_size, rank=params.local_rank)
 
-        # todo: incorrect without multiprocessing?
-        torch.cuda.set_device(device)
-        device = torch.device('cuda', params.local_rank)
+        if params.distributed_mp:
+            torch.cuda.set_device(device)
+            device = torch.device('cuda', params.local_rank)
 
-    logger = get_logger(level=logging.INFO if params.local_rank in [-1, 0] else logging.WARN)
-    logger.info(f'Used device in main process: {device}')
+    gpu_id = device if params.distributed_mp else None
+
+    logger = get_logger(level=(logging.INFO if params.local_rank in [-1, 0] else logging.WARN))
+    logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
 
     model, tokenizer = get_model(params)
     train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer)
@@ -154,7 +155,9 @@ def run_worker(device, params):
                       train_weights=train_weights,
                       drop_optimizer=params.drop_optimizer,
                       max_grad_norm=params.max_grad_norm,
-                      debug=params.debug)
+                      debug=params.debug,
+                      local_rank=params.local_rank,
+                      gpu_id=gpu_id)
 
     if params.last is not None:
         trainer.load_state_dict(params.last)
@@ -202,11 +205,12 @@ def main() -> None:
     params.dist_ngpus_per_node = torch.cuda.device_count()
     params.dist_world_size *= params.dist_ngpus_per_node
     params.distributed = params.dist_world_size > 1
+    params.distributed_mp = params.dist_ngpus_per_node > 1
 
-    logger.info(f'Distributed: {params.distributed}. Distributed multiprocessing: {params.dist_multiprocessing}. '
+    logger.info(f'Distributed: {params.distributed}. Distributed multiprocessing: {params.distributed_mp}. '
                 f'World size: {params.dist_world_size}, #GPU: {params.dist_ngpus_per_node}.')
 
-    if params.dist_ngpus_per_node > 1:
+    if params.distributed_mp:
         mp.spawn(run_worker, nprocs=params.dist_ngpus_per_node, args=(params,))
     else:
         device = torch.device('cuda') if torch.cuda.is_available() and params.gpu else torch.device('cpu')

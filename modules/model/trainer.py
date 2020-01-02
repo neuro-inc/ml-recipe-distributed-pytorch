@@ -61,7 +61,8 @@ class Trainer:
                  train_weights=None,
                  debug=False,
                  max_grad_norm=1,
-                 local_rank=-1):
+                 local_rank=-1,
+                 gpu_id=None):
         self.model = model.to(device)
 
         optimizer_parameters = list(model.named_parameters())
@@ -82,9 +83,12 @@ class Trainer:
                                                      apex_level=apex_level, apex_verbosity=apex_verbosity)
 
         if local_rank != -1:
-            self.model = torch.nn.parallel.DistributedDataParallel(
-                self.model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True
-            )
+            if gpu_id is not None:
+                self.model = torch.nn.parallel.DistributedDataParallel(
+                    self.model, device_ids=[gpu_id], output_device=gpu_id, find_unused_parameters=True
+                )
+            else:
+                self.model = torch.nn.parallel.DistributedDataParallel(self.model, find_unused_parameters=True)
 
         self.apex_level = apex_level
         self.apex_verbosity = apex_verbosity

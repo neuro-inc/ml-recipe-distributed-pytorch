@@ -1,4 +1,5 @@
-# export NUM_GPUS=2
-# export OMP_NUM_THREADS (int)(multiprocessing.cpu_count() / nproc_per_node)
+# export LOCAL_RANK=0
+# export MASTER_IP=127.0.0.1
+# export MASTER_PORT=9080
 
-python -m torch.distributed.launch --nproc_per_node=$NUM_GPUS "$@"
+python ./modules/train.py --local_rank $LOCAL_RANK --dist_backend nccl --dist_init_method "tcp://${MASTER_IP}:${MASTER_PORT}" "$@"
