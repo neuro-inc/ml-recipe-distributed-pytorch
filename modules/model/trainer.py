@@ -62,7 +62,18 @@ class Trainer:
                  debug=False,
                  max_grad_norm=1,
                  local_rank=-1,
-                 gpu_id=None):
+                 gpu_id=None,
+                 sync_bn=False):
+
+        if sync_bn and local_rank != -1:
+            try:
+                import apex
+                model = apex.parallel.convert_syncbn_model(model)
+                logger.info('BatchNorm was synchronized across nodes with APEX module.')
+            except ImportError:
+                model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+                logger.info('BatchNorm was synchronized across nodes with Pytorch module.')
+
         self.model = model.to(device)
 
         optimizer_parameters = list(model.named_parameters())
@@ -92,7 +103,7 @@ class Trainer:
 
         self.apex_level = apex_level
         self.apex_verbosity = apex_verbosity
-        logger.info(f'APEX optimization level: {self.apex_level}. Verbosity: {self.apex_verbosity}.')
+        logger.info(f'APEX optimization level: {self.apex_level}. APEX verbosity: {self.apex_verbosity}.')
 
         logger.info(f'Train Dataset len: {len(train_dataset)}.')
         logger.info(f'Test Dataset len: {len(test_dataset)}.')
@@ -246,10 +257,10 @@ class Trainer:
 
         tqdm_data = tqdm(self.train_dataloader, desc=f'Train (epoch #{epoch_i} / {self.n_epochs})')
 
-        for i, ((input_ids, attention_mask, token_types), labels) in enumerate(tqdm_data):
+        for i, ((input_ids, attention_mask, token_type_ids), labels) in enumerate(tqdm_data):
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,
-                                     token_type_ids=token_types)
+                                     token_type_ids=token_type_ids)
             loss = self._loss(pred_logits, labels, avg_losses=avg_losses)
 
             loss = loss / self.batch_split if self.batch_split > 1 else loss
@@ -269,10 +280,11 @@ class Trainer:
 
                 self.global_step += 1
 
-            Trainer._update_console(tqdm_data, avg_losses)
+                if self.debug:
+                    logger.info('Training was interrupted because of debug mode.')
+                    break
 
-            if self.debug:
-                break
+            Trainer._update_console(tqdm_data, avg_losses)
 
     def test(self, epoch_i):
         if self.local_rank == -1:
@@ -285,11 +297,11 @@ class Trainer:
 
         tqdm_data = tqdm(self.test_dataloader, desc=f'Test (epoch #{epoch_i} / {self.n_epochs})')
 
-        for i, ((input_ids, attention_mask, token_types), labels) in enumerate(tqdm_data):
+        for i, ((input_ids, attention_mask, token_type_ids), labels) in enumerate(tqdm_data):
 
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,
-                                     token_type_ids=token_types)
+                                     token_type_ids=token_type_ids)
 
             _ = self._loss(pred_logits, labels, avg_losses=avg_losses)
 
@@ -310,6 +322,7 @@ class Trainer:
             Trainer._update_console(tqdm_data, avg_losses)
 
             if self.debug:
+                logger.info('Test was interrupted because of debug mode.')
                 break
 
         self._update_writer(avg_losses, prefix='test')
@@ -322,7 +335,9 @@ class Trainer:
             logger.info(f'Model was not saved to {path_} because of debug mode.')
             return
 
-        model_dict = self.model.state_dict()
+        model = self.model.module if isinstance(self.model, nn.parallel.DistributedDataParallel) else self.model
+
+        model_dict = model.state_dict()
         optimizer_dict = self.optimizer.state_dict()
         scheduler_dict = self.scheduler.state_dict()
 
@@ -342,7 +357,9 @@ class Trainer:
 
         state_dict = torch.load(path_, map_location=self.device)
 
-        self.model.load_state_dict(state_dict['model'])
+        model = self.model.module if isinstance(self.model, nn.parallel.DistributedDataParallel) else self.model
+
+        model.load_state_dict(state_dict['model'])
         self.global_step = state_dict['global_step']
 
         logger.info(f'Model weights were loaded from {path_} checkpoint.')

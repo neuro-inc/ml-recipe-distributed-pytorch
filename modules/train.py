@@ -50,6 +50,7 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--w_cls', type=float, default=1, help='')
 
     parser.add_argument('--max_grad_norm', type=float, default=1, help='')
+    parser.add_argument('--sync_bn', action='store_true', help='')
 
     parser.add_argument('--warmup_coef', type=float, default=0.01, help='')
 
@@ -114,6 +115,7 @@ def show_params(params):
 
 
 def run_worker(device, params):
+    gpu_id = device if params.distributed_mp else None
     if params.distributed:
         if params.local_rank == -1:
             raise AttributeError('Specify local rank.')
@@ -127,8 +129,6 @@ def run_worker(device, params):
         if params.distributed_mp:
             torch.cuda.set_device(device)
             device = torch.device('cuda', params.local_rank)
-
-    gpu_id = device if params.distributed_mp else None
 
     logger = get_logger(level=(logging.INFO if params.local_rank in [-1, 0] else logging.WARN))
     logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
@@ -155,6 +155,7 @@ def run_worker(device, params):
                       train_weights=train_weights,
                       drop_optimizer=params.drop_optimizer,
                       max_grad_norm=params.max_grad_norm,
+                      sync_bn=params.sync_bn,
                       debug=params.debug,
                       local_rank=params.local_rank,
                       gpu_id=gpu_id)
