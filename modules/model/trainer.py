@@ -83,12 +83,17 @@ class Trainer:
             {'params': [p for n, p in optimizer_parameters if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}]
 
         # todo: incorrect value during distributed training
-        num_training_steps = n_epochs * len(train_dataset) // train_batch_size // batch_split
+        num_training_steps = n_epochs * len(train_dataset) // (train_batch_size * batch_split)
         num_warmup_steps = num_training_steps * warmup_coef
+
+        logger.info(f'Train Dataset len: {len(train_dataset)}.')
+        logger.info(f'Test Dataset len: {len(test_dataset)}.')
+        logger.info(f'Training steps number: {num_training_steps}. Warmup steps number: {num_warmup_steps}.')
 
         self.optimizer = AdamW(optimizer_grouped_parameters, lr=lr, correct_bias=False)
         self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=num_warmup_steps,
-                                                         num_training_steps=num_training_steps)
+                                                         num_training_steps=num_training_steps) \
+            if num_warmup_steps else None
 
         self.model, self.optimizer = initialize_apex(self.model,  self.optimizer,
                                                      apex_level=apex_level, apex_verbosity=apex_verbosity)
@@ -105,8 +110,7 @@ class Trainer:
         self.apex_verbosity = apex_verbosity
         logger.info(f'APEX optimization level: {self.apex_level}. APEX verbosity: {self.apex_verbosity}.')
 
-        logger.info(f'Train Dataset len: {len(train_dataset)}.')
-        logger.info(f'Test Dataset len: {len(test_dataset)}.')
+
 
         if local_rank == -1:
             train_sampler = RandomSampler(train_dataset) if train_weights is None \
@@ -170,9 +174,10 @@ class Trainer:
             token_type_ids[i, :len(row)] = token_type_id
 
         attention_mask = tokens > 0
-        inputs = [torch.from_numpy(tokens).to(self.device),
-                  torch.from_numpy(attention_mask).to(self.device),
-                  torch.from_numpy(token_type_ids).to(self.device)]
+        inputs = [torch.from_numpy(tokens),
+                  torch.from_numpy(attention_mask),
+                  torch.from_numpy(token_type_ids),
+                  ]
 
         # output labels
         start_ids = np.array([item.start_id for item in items])
@@ -180,9 +185,10 @@ class Trainer:
 
         label_ids = [item.label_id for item in items]
 
-        labels = [torch.LongTensor(start_ids).to(self.device),
-                  torch.LongTensor(end_ids).to(self.device),
-                  torch.LongTensor(label_ids).to(self.device)]
+        labels = [torch.LongTensor(start_ids),
+                  torch.LongTensor(end_ids),
+                  torch.LongTensor(label_ids),
+                  ]
 
         return [inputs, labels]
 
@@ -257,7 +263,10 @@ class Trainer:
 
         tqdm_data = tqdm(self.train_dataloader, desc=f'Train (epoch #{epoch_i} / {self.n_epochs})')
 
-        for i, ((input_ids, attention_mask, token_type_ids), labels) in enumerate(tqdm_data):
+        for i, (inputs, labels) in enumerate(tqdm_data):
+            (input_ids, attention_mask, token_type_ids) = (input_.to(self.device) for input_ in inputs)
+            labels = [label.to(self.device) for label in labels]
+
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,
                                      token_type_ids=token_type_ids)
@@ -270,11 +279,12 @@ class Trainer:
             avg_losses['lr'] = self.get_lr()
 
             if (i + 1) % self.batch_split == 0:
-                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10.0)
-
+                self._clip_grad_norm()
                 self.optimizer.step()
-                self.scheduler.step()
                 self.optimizer.zero_grad()
+
+                if self.scheduler is not None:
+                    self.scheduler.step()
 
                 self._update_writer(avg_losses, prefix='train')
 
@@ -297,7 +307,9 @@ class Trainer:
 
         tqdm_data = tqdm(self.test_dataloader, desc=f'Test (epoch #{epoch_i} / {self.n_epochs})')
 
-        for i, ((input_ids, attention_mask, token_type_ids), labels) in enumerate(tqdm_data):
+        for i, (inputs, labels) in enumerate(tqdm_data):
+            (input_ids, attention_mask, token_type_ids) = (input_.to(self.device) for input_ in inputs)
+            labels = [label.to(self.device) for label in labels]
 
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,

@@ -7,7 +7,7 @@ import configargparse
 import numpy as np
 import torch
 import torch.multiprocessing as mp
-from model.dataset_online import DataPreprocessorOnline, DataPreprocessorDatasetOnline
+from model.split_dataset import RawPreprocessor, SplitDataset
 from model.model import BertForQuestionAnswering
 from model.trainer import Trainer
 from transformers import BertTokenizer
@@ -42,8 +42,8 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for optimizer.')
 
     parser.add_argument('--data_path', type=str, required=True, help='')
-    parser.add_argument('--label_info_dump', type=str, default='./data/train_labels.pkl', help='')
-    parser.add_argument('--split_info_dump', type=str, default='./data/train_split.pkl', help='')
+    parser.add_argument('--processed_data_path', type=str, required=True, help='')
+    parser.add_argument('--clear_processed', action='store_true', help='')
 
     parser.add_argument('--w_start', type=float, default=1, help='')
     parser.add_argument('--w_end', type=float, default=1, help='')
@@ -52,7 +52,7 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--max_grad_norm', type=float, default=1, help='')
     parser.add_argument('--sync_bn', action='store_true', help='')
 
-    parser.add_argument('--warmup_coef', type=float, default=0.01, help='')
+    parser.add_argument('--warmup_coef', type=float, default=0.05, help='')
 
     parser.add_argument('--apex_level', type=cast2(str), default=None, help='')
     parser.add_argument('--apex_verbosity', type=int, default=1, help='')
@@ -86,24 +86,22 @@ def get_model(params):
     do_lower_case = 'uncased' in bert_model
 
     tokenizer = BertTokenizer.from_pretrained(bert_model, do_lower_case=do_lower_case)
-    model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(DataPreprocessorOnline.labels2id))
+    model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(RawPreprocessor.labels2id))
 
     return model, tokenizer
 
 
-def get_datasets(params, tokenizer):
-    preprocessor = DataPreprocessorOnline(params.data_path,
-                                          label_info_dump=params.label_info_dump,
-                                          split_info_dump=params.split_info_dump)
+def get_datasets(params, *, tokenizer=None, clear=False):
+    preprocessor = RawPreprocessor(raw_json=params.data_path,
+                                   out_dir=params.processed_data_path,
+                                   clear=clear)
+    labels_counter, labels, (train_indexes, train_labels, test_indexes, test_labels) = preprocessor()
 
-    label_counter, labels = preprocessor.scan_labels()
-    train_indexes, train_labels, test_indexes, test_labels = preprocessor.split_train_test(labels)
-
-    train_weights = np.asarray([1 / (label_counter[label]) for label in train_labels])
+    train_weights = np.asarray([1 / (labels_counter[label]) for label in train_labels])
     train_weights = train_weights / np.sum(train_weights)
 
-    train_dataset = DataPreprocessorDatasetOnline(preprocessor, tokenizer, train_indexes)
-    test_dataset = DataPreprocessorDatasetOnline(preprocessor, tokenizer, test_indexes)
+    train_dataset = SplitDataset(params.processed_data_path, tokenizer, train_indexes)
+    test_dataset = SplitDataset(params.processed_data_path, tokenizer, test_indexes)
 
     return train_dataset, test_dataset, train_weights
 
@@ -130,11 +128,13 @@ def run_worker(device, params):
             torch.cuda.set_device(device)
             device = torch.device('cuda', params.local_rank)
 
+        torch.distributed.barrier()
+
     logger = get_logger(level=(logging.INFO if params.local_rank in [-1, 0] else logging.WARN))
     logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
 
     model, tokenizer = get_model(params)
-    train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer)
+    train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer=tokenizer, clear=False)
 
     trainer = Trainer(model, tokenizer, train_dataset, test_dataset,
                       writer_dir=params.dump_dir / f'board/{params.experiment_name}',
@@ -210,6 +210,10 @@ def main() -> None:
 
     logger.info(f'Distributed: {params.distributed}. Distributed multiprocessing: {params.distributed_mp}. '
                 f'World size: {params.dist_world_size}, #GPU: {params.dist_ngpus_per_node}.')
+
+    if params.distributed and params.local_rank in [0, -1]:
+        logger.info('Preparing dataset in main process.')
+        _ = get_datasets(params, tokenizer=None, clear=params.clear_processed)
 
     if params.distributed_mp:
         mp.spawn(run_worker, nprocs=params.dist_ngpus_per_node, args=(params,))
