@@ -83,8 +83,8 @@ class Trainer:
             {'params': [p for n, p in optimizer_parameters if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}]
 
         # todo: incorrect value during distributed training
-        num_training_steps = n_epochs * len(train_dataset) // (train_batch_size * batch_split)
-        num_warmup_steps = num_training_steps * warmup_coef
+        num_training_steps = n_epochs * len(train_dataset) // train_batch_size
+        num_warmup_steps = int(num_training_steps * warmup_coef)
 
         logger.info(f'Train Dataset len: {len(train_dataset)}.')
         logger.info(f'Test Dataset len: {len(test_dataset)}.')
@@ -109,8 +109,6 @@ class Trainer:
         self.apex_level = apex_level
         self.apex_verbosity = apex_verbosity
         logger.info(f'APEX optimization level: {self.apex_level}. APEX verbosity: {self.apex_verbosity}.')
-
-
 
         if local_rank == -1:
             train_sampler = RandomSampler(train_dataset) if train_weights is None \
@@ -148,8 +146,11 @@ class Trainer:
         self.n_epochs = n_epochs
         self.tokenizer = tokenizer
         self.global_step = 0
-        self.debug = debug
         self.drop_optimizer = drop_optimizer
+
+        self.debug = debug
+        if self.debug:
+            self.n_epochs = 1
 
         self.writer = SummaryWriter(log_dir=writer_dir) if self.local_rank in [-1, 0] else None
 
