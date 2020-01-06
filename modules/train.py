@@ -2,76 +2,15 @@ import logging
 import os
 import random
 from datetime import datetime
-from pathlib import Path
 
-import configargparse
 import numpy as np
 import torch
 import torch.multiprocessing as mp
 from model.model import BertForQuestionAnswering
+from model.parser import get_trainer_parser, get_model_parser, write_config_file
 from model.split_dataset import RawPreprocessor, SplitDataset
 from model.trainer import Trainer
 from transformers import BertTokenizer
-
-
-def get_parser() -> configargparse.ArgumentParser:
-    def cast2(type_):
-        return lambda x: type_(x) if x != 'None' else None
-
-    parser = configargparse.ArgumentParser(description='Midi-generator training script.')
-
-    parser.add_argument('-c', '--config_file', required=False, is_config_file=True, help='Config file path.')
-
-    parser.add_argument('--dump_dir', type=Path, default='../results', help='Dump path.')
-    parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name.')
-
-    parser.add_argument('--last', type=cast2(str), default=None, help='Restored checkpoint.')
-
-    parser.add_argument('--gpu', action='store_true', help='Use gpu to train model.')
-
-    parser.add_argument('--seed', type=cast2(int), default=None, help='Seed for random state.')
-
-    parser.add_argument('--n_jobs', type=int, default=2, help='Number of threads in data loader.')
-    parser.add_argument('--n_epochs', type=int, default=10, help='Number of epochs.')
-
-    parser.add_argument('--train_batch_size', type=int, default=128, help='Number of items in batch.')
-    parser.add_argument('--test_batch_size', type=int, default=16, help='Number of items in batch.')
-    parser.add_argument('--batch_split', type=int, default=1,
-                        help='Batch will be split into this number chunks during training.')
-
-    parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate for optimizer.')
-    parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for optimizer.')
-
-    parser.add_argument('--data_path', type=str, required=True, help='')
-    parser.add_argument('--processed_data_path', type=str, required=True, help='')
-    parser.add_argument('--clear_processed', action='store_true', help='')
-
-    parser.add_argument('--w_start', type=float, default=1, help='')
-    parser.add_argument('--w_end', type=float, default=1, help='')
-    parser.add_argument('--w_cls', type=float, default=1, help='')
-
-    parser.add_argument('--focal', action='store_true', help='')
-    parser.add_argument('--focal_alpha', type=float, default=1, help='')
-    parser.add_argument('--focal_gamma', type=float, default=2, help='')
-
-    parser.add_argument('--max_grad_norm', type=float, default=1, help='')
-    parser.add_argument('--sync_bn', action='store_true', help='')
-
-    parser.add_argument('--warmup_coef', type=float, default=0.05, help='')
-
-    parser.add_argument('--apex_level', type=cast2(str), default=None, help='')
-    parser.add_argument('--apex_verbosity', type=int, default=1, help='')
-
-    parser.add_argument('--drop_optimizer', action='store_true', help='')
-
-    parser.add_argument('--debug', action='store_true', help='Debug mode.')
-
-    parser.add_argument('--local_rank', type=int, default=-1, help='')
-    parser.add_argument('--dist_backend', type=str, default='nccl', help='')
-    parser.add_argument('--dist_init_method', type=str, default='tcp://127.0.0.1:9080', help='')
-    parser.add_argument('--dist_world_size', type=int, default=1, help='')
-
-    return parser
 
 
 def set_seed(seed=None):
@@ -86,8 +25,8 @@ def set_seed(seed=None):
         logger.info(f'Random seed was set to {seed}. It can affect speed of training.')
 
 
-def get_model(params):
-    bert_model = 'bert-base-uncased'
+def get_model(model_params):
+    bert_model = model_params.model
     do_lower_case = 'uncased' in bert_model
 
     tokenizer = BertTokenizer.from_pretrained(bert_model, do_lower_case=do_lower_case)
@@ -111,13 +50,13 @@ def get_datasets(params, *, tokenizer=None, clear=False):
     return train_dataset, test_dataset, train_weights
 
 
-def show_params(params):
-    logger.info('Input parameters:')
+def show_params(params, name):
+    logger.info(f'Input {name} parameters:')
     for k in sorted(params.__dict__.keys()):
         logger.info(f'\t{k}: {getattr(params, k)}')
 
 
-def run_worker(device, params):
+def run_worker(device, params, model_params):
     gpu_id = device if params.distributed_mp else None
     if params.distributed:
         if params.local_rank == -1:
@@ -141,7 +80,7 @@ def run_worker(device, params):
 
     logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
 
-    model, tokenizer = get_model(params)
+    model, tokenizer = get_model(model_params)
     train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer=tokenizer, clear=False)
 
     trainer = Trainer(model, tokenizer, train_dataset, test_dataset,
@@ -208,9 +147,9 @@ def run_worker(device, params):
         raise e
 
 
-def main(params) -> None:
-    show_params(params)
-    os.makedirs(params.dump_dir / params.experiment_name, exist_ok=True)
+def main(params, model_params) -> None:
+    show_params(model_params, 'model')
+    show_params(params, 'trainer')
 
     set_seed(params.seed)
 
@@ -228,10 +167,10 @@ def main(params) -> None:
         _ = get_datasets(params, tokenizer=None, clear=params.clear_processed)
 
     if params.distributed_mp:
-        mp.spawn(run_worker, nprocs=params.dist_ngpus_per_node, args=(params,))
+        mp.spawn(run_worker, nprocs=params.dist_ngpus_per_node, args=(params, model_params))
     else:
         device = torch.device('cuda') if torch.cuda.is_available() and params.gpu else torch.device('cpu')
-        run_worker(device, params)
+        run_worker(device, params, model_params)
 
 
 def get_logger(level=logging.INFO, filename=None, filemode='w'):
@@ -253,23 +192,14 @@ def get_logger(level=logging.INFO, filename=None, filemode='w'):
     return logger
 
 
-def write_config_file(parser, parsed_namespace, output_path):
-    config_items = parser.get_items_for_config_file_output(parser._source_to_settings, parsed_namespace)
-    file_contents = parser._config_file_parser.serialize(config_items)
-
-    try:
-        with open(output_path, 'w') as output_file:
-            output_file.write(file_contents)
-    except IOError as e:
-        logger.error(f'Could not open file {output_file}.')
-        raise e
-
-    logger.info(f'Config was saved to {output_file}.')
-
-
 if __name__ == '__main__':
-    parser = get_parser()
-    params = parser.parse_args()
+    parser = get_trainer_parser()
+    params = parser.parse_known_args()[0]
+
+    os.makedirs(params.dump_dir / params.experiment_name, exist_ok=True)
+
+    model_parser = get_model_parser()
+    model_params = model_parser.parse_known_args()[0]
 
     params.log_file = params.dump_dir / params.experiment_name / f'{datetime.now().strftime("%d-%m-%Y_%H-%M-%S")}.log' \
         if params.local_rank in [-1, 0] else None
@@ -277,6 +207,7 @@ if __name__ == '__main__':
     logger = get_logger(filename=params.log_file, filemode='w')
 
     if params.local_rank in [0, -1]:
-        write_config_file(parser, params, params.dump_dir / params.experiment_name / 'train.cfg')
-        
-    main(params)
+        write_config_file(parser, params, params.dump_dir / params.experiment_name / 'trainer.cfg')
+        write_config_file(model_parser, model_params, params.dump_dir / params.experiment_name / 'model.cfg')
+
+    main(params, model_params)
