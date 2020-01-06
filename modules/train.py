@@ -1,14 +1,15 @@
 import logging
 import os
 import random
+from datetime import datetime
 from pathlib import Path
 
 import configargparse
 import numpy as np
 import torch
 import torch.multiprocessing as mp
-from model.split_dataset import RawPreprocessor, SplitDataset
 from model.model import BertForQuestionAnswering
+from model.split_dataset import RawPreprocessor, SplitDataset
 from model.trainer import Trainer
 from transformers import BertTokenizer
 
@@ -134,7 +135,10 @@ def run_worker(device, params):
 
         torch.distributed.barrier()
 
-    logger = get_logger(level=(logging.INFO if params.local_rank in [-1, 0] else logging.WARN))
+    log_file = params.log_file if params.local_rank in [-1, 0] else None
+    log_level = logging.INFO if params.local_rank in [-1, 0] else logging.WARN
+    logger = get_logger(level=log_level, filename=log_file, filemode='a')
+
     logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
 
     model, tokenizer = get_model(params)
@@ -199,11 +203,12 @@ def run_worker(device, params):
     except KeyboardInterrupt:
         logger.error('Training process was interrupted.')
         trainer.save_state_dict(params.dump_dir / params.experiment_name / 'interrupt.ch')
+    except Exception as e:
+        logger.error(e)
+        raise e
 
 
-def main() -> None:
-    params = get_parser().parse_args()
-
+def main(params) -> None:
     show_params(params)
     os.makedirs(params.dump_dir / params.experiment_name, exist_ok=True)
 
@@ -229,17 +234,49 @@ def main() -> None:
         run_worker(device, params)
 
 
-def get_logger(level=logging.INFO):
+def get_logger(level=logging.INFO, filename=None, filemode='w'):
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
-                        level=level)
+                        level=level,
+                        handlers=[logging.StreamHandler(),
+                                  logging.FileHandler(filename, filemode)])
 
     logging.getLogger('transformers').setLevel('CRITICAL')
 
-    return logging.getLogger(__file__)
+    logger = logging.getLogger(__file__)
+    if filename is not None and filemode == 'w':
+        logger.info(f'All logs will be dumped to {filename}.')
+
+    return logger
+
+
+def write_config_file(parser, parsed_namespace, output_path):
+    config_items = parser.get_items_for_config_file_output(parser._source_to_settings, parsed_namespace)
+    file_contents = parser._config_file_parser.serialize(config_items)
+
+    try:
+        with open(output_path, 'w') as output_file:
+            output_file.write(file_contents)
+    except IOError as e:
+        logger.error(f'Could not open file {output_file}.')
+        raise e
+
+    logger.info(f'Config was saved to {output_file}.')
 
 
 if __name__ == '__main__':
-    logger = get_logger()
+    parser = get_parser()
+    params = parser.parse_args()
 
-    main()
+    params.log_file = params.dump_dir / params.experiment_name / f'{datetime.now().strftime("%d-%m-%Y_%H-%M-%S")}.log' \
+        if params.local_rank in [-1, 0] else None
+
+    logger = get_logger(filename=params.log_file, filemode='w')
+
+    if params.local_rank in [0, -1]:
+        write_config_file(parser, params, params.dump_dir / params.experiment_name / 'train.cfg')
+        
+    main(params)
