@@ -49,6 +49,10 @@ def get_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--w_end', type=float, default=1, help='')
     parser.add_argument('--w_cls', type=float, default=1, help='')
 
+    parser.add_argument('--focal', action='store_true', help='')
+    parser.add_argument('--focal_alpha', type=float, default=1, help='')
+    parser.add_argument('--focal_gamma', type=float, default=2, help='')
+
     parser.add_argument('--max_grad_norm', type=float, default=1, help='')
     parser.add_argument('--sync_bn', action='store_true', help='')
 
@@ -149,6 +153,9 @@ def run_worker(device, params):
                       w_start=params.w_start,
                       w_end=params.w_end,
                       w_cls=params.w_cls,
+                      focal=params.focal,
+                      focal_alpha=params.focal_alpha,
+                      focal_gamma=params.focal_gamma,
                       warmup_coef=params.warmup_coef,
                       apex_level=params.apex_level,
                       apex_verbosity=params.apex_verbosity,

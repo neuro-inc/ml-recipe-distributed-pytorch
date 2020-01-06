@@ -12,6 +12,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import AdamW, get_linear_schedule_with_warmup
 
+from .loss import FocalLossWithLogits
+
 logger = logging.getLogger(__file__)
 
 
@@ -54,6 +56,9 @@ class Trainer:
                  w_start=1,
                  w_end=1,
                  w_cls=1,
+                 focal=False,
+                 focal_alpha=1,
+                 focal_gamma=2,
                  warmup_coef=0.01,
                  apex_level=None,
                  apex_verbosity=1,
@@ -130,9 +135,12 @@ class Trainer:
                                                            drop_last=False,
                                                            collate_fn=self.collate_fun)
 
-        self.start_loss = nn.CrossEntropyLoss(ignore_index=-1).to(device)
-        self.end_loss = nn.CrossEntropyLoss(ignore_index=-1).to(device)
-        self.cls_loss = nn.CrossEntropyLoss().to(device)
+        self.start_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma, ignore_index=-1) if focal \
+            else nn.CrossEntropyLoss(ignore_index=-1)
+        self.end_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma, ignore_index=-1) if focal \
+            else nn.CrossEntropyLoss(ignore_index=-1)
+        self.cls_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma) if focal \
+            else nn.CrossEntropyLoss()
 
         self.w_start = w_start
         self.w_end = w_end
