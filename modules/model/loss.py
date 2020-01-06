@@ -13,7 +13,7 @@ class BinaryFocalLossWithLogits(nn.Module):
 
     def forward(self, inputs, targets):
         loss = self.criterion(inputs, targets)
-        probs = torch.sigmoid(inputs)
+        probs = torch.exp(-loss)
 
         return torch.mean(self.alpha * (1 - probs)**self.gamma * loss)
 
