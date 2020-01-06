@@ -12,6 +12,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import AdamW, get_linear_schedule_with_warmup
 
+from .split_dataset import RawPreprocessor
+from .meters import *
 from .loss import FocalLossWithLogits
 
 logger = logging.getLogger(__file__)
@@ -28,19 +30,6 @@ def initialize_apex(model, optimizer, apex_level=None, apex_verbosity=0):
                                           verbosity=apex_verbosity)
 
     return model, optimizer
-
-
-class AverageMeter:
-    def __init__(self):
-        self._counter = 0
-        self._avg_value = 0
-
-    def __call__(self):
-        return self._avg_value
-
-    def update(self, value):
-        self._counter += 1
-        self._avg_value = (self._avg_value * (self._counter - 1) + value) / self._counter
 
 
 class Trainer:
@@ -306,13 +295,16 @@ class Trainer:
             Trainer._update_console(tqdm_data, avg_losses)
 
     def test(self, epoch_i):
+        # todo: eval during distributed training
         if self.local_rank == -1:
-            self._test(epoch_i)
+            with torch.no_grad():
+                self._test(epoch_i)
 
     def _test(self, epoch_i):
         self.model.eval()
 
         avg_losses = defaultdict(AverageMeter)
+        map_meter = MAPMeter()
 
         tqdm_data = tqdm(self.test_dataloader, desc=f'Test (epoch #{epoch_i} / {self.n_epochs})')
 
@@ -338,7 +330,11 @@ class Trainer:
             avg_losses['e_acc'].update(metrics.accuracy_score(end_true[end_idxs], end_pred[end_idxs]))
             avg_losses['c_acc'].update(metrics.accuracy_score(cls_true, cls_pred))
 
-            # mask = (cls_true == RawDataPreprocessor.labels2id['short']) | (cls_true == RawDataPreprocessor.labels2id['long'])
+            map_meter.update(keys=list(RawPreprocessor.labels2id.keys()),
+                             pred_probas=torch.softmax(cls_logits, dim=-1).numpy(),
+                             true_labels=cls_true.numpy())
+
+            avg_losses.update(map_meter())
 
             Trainer._update_console(tqdm_data, avg_losses)
 
