@@ -269,7 +269,7 @@ kill-develop:  ### Terminate the development job
 .PHONY: train
 train: _check_setup upload-code upload-config   ### Run a training job
 	$(NEURO) run \
-		--name $(TRAIN_JOB) \
+		--name $(TRAIN_JOB)-$(RUN) \
 		--preset $(PRESET) \
 		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):ro \
