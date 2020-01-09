@@ -1,3 +1,4 @@
+import math
 import logging
 import os
 import random
@@ -22,7 +23,7 @@ def set_seed(seed=None):
         random.seed(seed)
         np.random.seed(seed)
 
-        logger.info(f'Random seed was set to {seed}. It can affect speed of training.')
+        logger.info(f'Random seed was set to {seed}. It can affect speed of training and performance of result model.')
 
 
 def get_model(model_params):
@@ -44,16 +45,17 @@ def get_datasets(params, *, tokenizer=None, clear=False):
     train_weights = np.asarray([1 / (labels_counter[label]) for label in train_labels])
     train_weights = train_weights / np.sum(train_weights)
 
-    train_dataset = SplitDataset(params.processed_data_path, tokenizer, train_indexes)
-    test_dataset = SplitDataset(params.processed_data_path, tokenizer, test_indexes)
+    train_dataset = SplitDataset(params.processed_data_path, tokenizer, train_indexes,
+                                 max_seq_len=params.max_seq_len,
+                                 max_question_len=params.max_question_len,
+                                 doc_stride=params.doc_stride)
+    test_dataset = SplitDataset(params.processed_data_path, tokenizer, test_indexes, test=True,
+                                max_seq_len=params.max_seq_len,
+                                max_question_len=params.max_question_len,
+                                doc_stride=params.doc_stride) \
+        if params.local_rank in [-1, 0] else None
 
     return train_dataset, test_dataset, train_weights
-
-
-def show_params(params, name):
-    logger.info(f'Input {name} parameters:')
-    for k in sorted(params.__dict__.keys()):
-        logger.info(f'\t{k}: {getattr(params, k)}')
 
 
 def run_worker(device, params, model_params):
@@ -72,6 +74,10 @@ def run_worker(device, params, model_params):
             torch.cuda.set_device(device)
             device = torch.device('cuda', params.local_rank)
 
+            if params.dist_ngpus_per_node * params.n_jobs > mp.cpu_count():
+                params.n_jobs = mp.cpu_count() // (2 * params.dist_ngpus_per_node)
+
+        # Wait dataset initialization in main process. Dataset directory mast be shared
         torch.distributed.barrier()
 
     log_file = params.log_file if params.local_rank in [-1, 0] else None
@@ -108,37 +114,45 @@ def run_worker(device, params, model_params):
                       sync_bn=params.sync_bn,
                       debug=params.debug,
                       local_rank=params.local_rank,
-                      gpu_id=gpu_id)
+                      gpu_id=gpu_id,
+                      finetune=params.finetune,
+                      finetune_transformer=params.finetune_transformer,
+                      finetune_position=params.finetune_position,
+                      finetune_class=params.finetune_class
+                      )
 
     if params.last is not None:
         trainer.load_state_dict(params.last)
 
-    # help functions
+    # helpers
     def save_last(*args, **kwargs):
         trainer.save_state_dict(params.dump_dir / params.experiment_name / 'last.ch')
 
     def save_each(epoch_i):
         trainer.save_state_dict(params.dump_dir / params.experiment_name / f'epoch_{epoch_i}.ch')
 
-    # class save_best:
-    #     def __init__(self):
-    #         self.metric = trainer_config.best_metric
-    #         self.order = trainer_config.best_order
-    #         self.value = 0
-    #
-    #     def __call__(self, *args):
-    #         assert hasattr(trainer, 'metrics')
-    #         assert self.metric in trainer.metrics
-    #
-    #         if eval(f'{trainer.metrics[self.metric]}{self.order}{self.value}'):
-    #             self.value = trainer.metrics[self.metric]
-    #             logger.info(f'Best value of {self.metric} was achieved after training step {trainer.global_step} '
-    #                         f'and equals to {self.value}')
-    #             state_dict = trainer.state_dict()
-    #             torch.save(state_dict, join(trainer_config.dump_dir, 'best.ch'))
+    class save_best:
+        def __init__(self):
+            self.metric = params.best_metric
+            self.order = params.best_order
+            self.value = 1e10 * (-1 if params.best_order == '>' else 1)
+
+        def __call__(self, *args):
+            if trainer.metrics is not None:
+                assert self.metric in trainer.metrics
+
+                if self.metric in trainer.metrics and not math.isnan(trainer.metrics[self.metric]):
+
+                    if eval(f'{trainer.metrics[self.metric]}{self.order}{self.value}'):
+                        self.value = trainer.metrics[self.metric]
+                        trainer.save_state_dict(params.dump_dir / params.experiment_name / f'best.ch')
+                        logger.info(f'Best value of {self.metric} was achieved after training step {trainer.global_step} '
+                                    f'and equals to {self.value}')
+                else:
+                    logger.warning(f'Trainer metrics do not contain metric {self.metric}.')
 
     try:
-        trainer.train(after_epoch_funcs=[save_last, save_each, trainer.test])
+        trainer.train(after_epoch_funcs=[save_last, save_each, trainer.test, save_best()])
     except KeyboardInterrupt:
         logger.error('Training process was interrupted.')
         trainer.save_state_dict(params.dump_dir / params.experiment_name / 'interrupt.ch')
@@ -222,5 +236,7 @@ if __name__ == '__main__':
     if params.local_rank in [0, -1]:
         write_config_file(parser, params, params.dump_dir / params.experiment_name / 'trainer.cfg')
         write_config_file(model_parser, model_params, params.dump_dir / params.experiment_name / 'model.cfg')
+
+    params.n_jobs = min(params.n_jobs, mp.cpu_count() // 2)
 
     main(params, model_params)
