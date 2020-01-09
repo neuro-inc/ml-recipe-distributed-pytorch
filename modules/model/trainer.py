@@ -1,20 +1,17 @@
 import logging
 import os
-from collections import defaultdict
 
-import numpy as np
 import torch
 import torch.nn as nn
-from sklearn import metrics
 # from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler, DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import AdamW, get_linear_schedule_with_warmup
 
-from .split_dataset import RawPreprocessor
-from .meters import *
 from .loss import FocalLossWithLogits
+from .meters import *
+from .split_dataset import RawPreprocessor
 
 logger = logging.getLogger(__file__)
 
@@ -30,6 +27,48 @@ def initialize_apex(model, optimizer, apex_level=None, apex_verbosity=0):
                                           verbosity=apex_verbosity)
 
     return model, optimizer
+
+
+def get_optimized_parameters(model, weight_decay, *,
+                             finetune=False,
+                             finetune_transformer=False,
+                             finetune_position=False,
+                             finetune_class=False):
+    if finetune:
+        model.eval()
+
+        optimizer_parameters = []
+        modules = []
+
+        if finetune_transformer:
+            modules.append(model.transformer)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+
+        if finetune_position:
+            modules.append(model.position_outputs)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+
+        if finetune_class:
+            modules.append(model.classifier)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+
+        if not modules:
+            raise AttributeError('Specify at least one module for fine-tuning.')
+
+        logger.info(f'Fine-tuned modules: transformer({finetune_transformer}), '
+                    f'position({finetune_position}),  classifier({finetune_class}).')
+
+    else:
+        modules = [model]
+        optimizer_parameters = list(model.named_parameters())
+
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    optimizer_grouped_parameters = [
+        {'params': [p for n, p in optimizer_parameters if not any(nd in n for nd in no_decay)],
+         'weight_decay': weight_decay},
+        {'params': [p for n, p in optimizer_parameters if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}]
+
+    return modules, optimizer_grouped_parameters
 
 
 class Trainer:
@@ -57,7 +96,12 @@ class Trainer:
                  max_grad_norm=1,
                  local_rank=-1,
                  gpu_id=None,
-                 sync_bn=False):
+                 sync_bn=False,
+                 finetune=False,
+                 finetune_transformer=False,
+                 finetune_position=False,
+                 finetune_class=False
+                 ):
 
         if sync_bn and local_rank != -1:
             try:
@@ -70,18 +114,18 @@ class Trainer:
 
         self.model = model.to(device)
 
-        optimizer_parameters = list(model.named_parameters())
-        no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
-        optimizer_grouped_parameters = [
-            {'params': [p for n, p in optimizer_parameters if not any(nd in n for nd in no_decay)], 'weight_decay': weight_decay},
-            {'params': [p for n, p in optimizer_parameters if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}]
+        self.modules, optimizer_grouped_parameters = get_optimized_parameters(self.model, weight_decay,
+                                                                              finetune=finetune,
+                                                                              finetune_transformer=finetune_transformer,
+                                                                              finetune_position=finetune_position,
+                                                                              finetune_class=finetune_class)
 
         # todo: incorrect value during distributed training
         num_training_steps = n_epochs * len(train_dataset) // train_batch_size
         num_warmup_steps = int(num_training_steps * warmup_coef)
 
-        logger.info(f'Train Dataset len: {len(train_dataset)}.')
-        logger.info(f'Test Dataset len: {len(test_dataset)}.')
+        logger.info(f'Train Dataset len: {len(train_dataset)}. #JOBS: {n_jobs}.')
+        logger.info(f'Test Dataset len: {len(test_dataset)}. #JOBS: {n_jobs}.')
         logger.info(f'Training steps number: {num_training_steps}. Warmup steps number: {num_warmup_steps}.')
 
         self.optimizer = AdamW(optimizer_grouped_parameters, lr=lr, correct_bias=False)
@@ -115,14 +159,16 @@ class Trainer:
                                                             num_workers=n_jobs,
                                                             sampler=train_sampler,
                                                             drop_last=True,
-                                                            collate_fn=self.collate_fun)
+                                                            collate_fn=self.collate_fun) \
+            if train_dataset is not None else None
 
         self.test_dataloader = torch.utils.data.DataLoader(test_dataset,
                                                            batch_size=test_batch_size,
                                                            num_workers=n_jobs,
                                                            shuffle=False,
                                                            drop_last=False,
-                                                           collate_fn=self.collate_fun)
+                                                           collate_fn=self.collate_fun) \
+            if test_dataset is not None else None
 
         self.start_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma, ignore_index=-1) if focal \
             else nn.CrossEntropyLoss(ignore_index=-1)
@@ -150,6 +196,8 @@ class Trainer:
             self.n_epochs = 1
 
         self.writer = SummaryWriter(log_dir=writer_dir) if self.local_rank in [-1, 0] else None
+
+        self.metrics = None
 
     def get_lr(self):
         return self.optimizer.param_groups[0]['lr']
@@ -221,17 +269,6 @@ class Trainer:
         else:
             loss.backward()
 
-    def train(self, after_epoch_funcs=None):
-        after_epoch_funcs = [] if after_epoch_funcs is None else after_epoch_funcs
-
-        def run_after_funcs():
-            for func in after_epoch_funcs:
-                func(epoch_i)
-
-        for epoch_i in range(1, self.n_epochs+1):
-            self._train(epoch_i)
-            run_after_funcs()
-
     @staticmethod
     def _update_console(tqdm_data, losses):
         tqdm_data.set_postfix({k: v() if isinstance(v, AverageMeter) else v for k, v in losses.items()})
@@ -253,8 +290,29 @@ class Trainer:
         else:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
+    def set_train(self):
+        for module in self.modules:
+            module.train()
+
+    def set_eval(self):
+        for module in self.modules:
+            module.eval()
+
+    def train(self, after_epoch_funcs=None):
+        after_epoch_funcs = [] if after_epoch_funcs is None else after_epoch_funcs
+
+        def run_after_funcs():
+            for func in after_epoch_funcs:
+                func(epoch_i)
+
+        for epoch_i in range(1, self.n_epochs+1):
+            if self.train_dataloader is not None:
+                self._train(epoch_i)
+            run_after_funcs()
+
     def _train(self, epoch_i):
-        self.model.train()
+        # self.model.train()
+        self.set_train()
         self.optimizer.zero_grad()
 
         avg_losses = defaultdict(AverageMeter)
@@ -264,6 +322,8 @@ class Trainer:
         for i, (inputs, labels) in enumerate(tqdm_data):
             (input_ids, attention_mask, token_type_ids) = (input_.to(self.device) for input_ in inputs)
             labels = [label.to(self.device) for label in labels]
+
+            # print(labels[-1])
 
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,
@@ -295,13 +355,17 @@ class Trainer:
             Trainer._update_console(tqdm_data, avg_losses)
 
     def test(self, epoch_i):
-        # todo: eval during distributed training
-        if self.local_rank == -1:
+        if self.test_dataloader is not None:
             with torch.no_grad():
                 self._test(epoch_i)
 
+        if self.local_rank != -1:
+            # Wait till validation ends in main process
+            torch.distributed.barrier()
+
     def _test(self, epoch_i):
-        self.model.eval()
+        # self.model.eval()
+        self.set_eval()
 
         avg_losses = defaultdict(AverageMeter)
         map_meter = MAPMeter()
@@ -326,15 +390,15 @@ class Trainer:
             start_idxs = start_true != -1
             end_idxs = end_true != -1
 
-            avg_losses['s_acc'].update(metrics.accuracy_score(start_true[start_idxs], start_pred[start_idxs]))
-            avg_losses['e_acc'].update(metrics.accuracy_score(end_true[end_idxs], end_pred[end_idxs]))
+            if any(start_idxs):
+                avg_losses['s_acc'].update(metrics.accuracy_score(start_true[start_idxs], start_pred[start_idxs]))
+            if any(end_idxs):
+                avg_losses['e_acc'].update(metrics.accuracy_score(end_true[end_idxs], end_pred[end_idxs]))
             avg_losses['c_acc'].update(metrics.accuracy_score(cls_true, cls_pred))
 
             map_meter.update(keys=list(RawPreprocessor.labels2id.keys()),
                              pred_probas=torch.softmax(cls_logits, dim=-1).numpy(),
                              true_labels=cls_true.numpy())
-
-            avg_losses.update(map_meter())
 
             Trainer._update_console(tqdm_data, avg_losses)
 
@@ -342,7 +406,12 @@ class Trainer:
                 logger.info('Test was interrupted because of debug mode.')
                 break
 
+        avg_losses.update(map_meter())
         self._update_writer(avg_losses, prefix='test')
+
+        out_dict = {k: v() if isinstance(v, AverageMeter) else v for k, v in avg_losses.items()}
+        logger.info(f'Test metrics after epoch {epoch_i}: {out_dict}')
+        self.metrics = out_dict
 
     def save_state_dict(self, path_):
         if self.local_rank not in [-1, 0]:
@@ -356,7 +425,7 @@ class Trainer:
 
         model_dict = model.state_dict()
         optimizer_dict = self.optimizer.state_dict()
-        scheduler_dict = self.scheduler.state_dict()
+        scheduler_dict = self.scheduler.state_dict() if self.scheduler is not None else None
 
         state_dict = {'model': model_dict,
                       'optimizer': optimizer_dict,
@@ -383,6 +452,7 @@ class Trainer:
 
         if not self.drop_optimizer:
             self.optimizer.load_state_dict(state_dict['optimizer'])
-            self.scheduler.load_state_dict(state_dict['scheduler'])
+            if self.scheduler is not None:
+                self.scheduler.load_state_dict(state_dict['scheduler'])
 
             logger.info(f'Optimizer and scheduler also were restored from {path_} checkpoint.')
