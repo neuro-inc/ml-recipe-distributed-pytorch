@@ -93,15 +93,15 @@ class RawPreprocessor(object):
 
         line['short_answers'] = annotations['short_answers']
 
-        #         long_answer_candidates = []
-        #         for d in raw_line['long_answer_candidates']:
-        #             if d['top_level']:
-        #                 start = d['start_token']
-        #                 end = d['end_token']
+        # long_answer_candidates = []
+        # for d in raw_line['long_answer_candidates']:
+        #     if d['top_level']:
+        #         start = d['start_token']
+        #         end = d['end_token']
+        #
+        #         long_answer_candidates.append(' '.join(document_text[start:end]))
 
-        #                 long_answer_candidates.append(' '.join(document_text[start:end]))
-
-        #         line['long_answer_candidates'] = long_answer_candidates
+        line['long_answer_candidates'] = raw_line['long_answer_candidates'] # long_answer_candidates
 
         return line
 
@@ -208,7 +208,8 @@ class SplitDataset:
     def __init__(self, data_dir, tokenizer, indexes, *,
                  max_seq_len=384,
                  max_question_len=64,
-                 doc_stride=128):
+                 doc_stride=128,
+                 test=False):
         self.data_dir = data_dir
         self.tokenizer = tokenizer
         self.indexes = indexes
@@ -220,8 +221,12 @@ class SplitDataset:
         self.labels2id = RawPreprocessor.labels2id
         self.id2labels = RawPreprocessor.id2labels
 
+        self.label2weight = {l: w for l, w in zip(['yes', 'no', 'short', 'long', 'unknown'], [1, 1, 1, 1, 1e-3])}
+
         if isinstance(self.data_dir, str):
             self.data_dir = Path(self.data_dir)
+
+        self.test = test
 
     def __len__(self):
         return len(self.indexes)
@@ -259,30 +264,34 @@ class SplitDataset:
 
         document_len = self.max_seq_len - len(tokenized_question) - 3  # [CLS], [SEP], [SEP]
 
-        if class_label == 'short' or class_label == 'long':
-            ans_distance = min(end_position - start_position, document_len)
+        samples = []
+        weights = []
 
-            doc_start = random.randint(max(start_position - ans_distance, 0), start_position)
+        for doc_start in range(0, len(tokenized_text), self.doc_stride):
             doc_end = doc_start + document_len
+            if not (doc_start <= start_position and end_position <= doc_end):
+                start, end, label = -1, -1, 'unknown'
+            else:
+                start = start_position - doc_start + len(tokenized_question) + 2
+                end = end_position - doc_start + len(tokenized_question) + 2
+                label = class_label
 
-            start = start_position - doc_start + len(tokenized_question) + 2
-            end = end_position - doc_start + len(tokenized_question) + 2
-            label = class_label
+            weights.append(self.label2weight[label])
+            samples.append((start, end, label, doc_start, doc_end))
 
-        else:
-            start = -1
-            end = -1
-            label = class_label
+            if self.test:
+                break
 
-            doc_start = random.randint(0, max(len(tokenized_text) - document_len, 1))
-            doc_end = doc_start + document_len
+        weights = np.asarray(weights)
+        weights = weights / np.sum(weights)
+
+        idx = np.random.choice(np.arange(len(samples)), 1, p=weights)[0]
+        start, end, label, doc_start, doc_end = samples[idx]
 
         chunk_text = tokenized_text[doc_start: doc_end]
         input_tokens = [self.tokenizer.cls_token] + tokenized_question + \
                        [self.tokenizer.sep_token] + chunk_text + \
                        [self.tokenizer.sep_token]
-
-        end = min(end, len(input_tokens) - 1)
 
         assert -1 <= start <= self.max_seq_len, f'Incorrect start index: {start}.'
         assert -1 <= end <= self.max_seq_len, f'Incorrect start index: {end}.'
