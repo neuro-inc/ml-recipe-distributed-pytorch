@@ -147,13 +147,19 @@ def run_worker(device, params, model_params):
         raise e
 
 
+def show_params(params, name):
+    logger.info(f'Input {name} parameters:')
+    for k in sorted(params.__dict__.keys()):
+        logger.info(f'\t{k}: {getattr(params, k)}')
+
+
 def main(params, model_params) -> None:
     show_params(model_params, 'model')
     show_params(params, 'trainer')
 
     set_seed(params.seed)
 
-    # todo: wrong rank if nodes have different gpu number?
+    # todo: wrong rank if nodes have different gpu number or when node does not gpu
     params.dist_ngpus_per_node = torch.cuda.device_count()
     params.dist_world_size *= params.dist_ngpus_per_node
     params.distributed = params.dist_world_size > 1
@@ -194,12 +200,19 @@ def get_logger(level=logging.INFO, filename=None, filemode='w'):
 
 if __name__ == '__main__':
     parser = get_trainer_parser()
-    params = parser.parse_known_args()[0]
+    params, unused = parser.parse_known_args()
 
     os.makedirs(params.dump_dir / params.experiment_name, exist_ok=True)
 
     model_parser = get_model_parser()
-    model_params = model_parser.parse_known_args()[0]
+    model_params, model_unused = model_parser.parse_known_args()
+
+    unused = set(model_unused) & set(unused)
+    if unused:
+        parser.print_help()
+        model_parser.print_help()
+        print(f'Incorrect command line parameters: {unused}.')
+        exit()
 
     params.log_file = params.dump_dir / params.experiment_name / f'{datetime.now().strftime("%d-%m-%Y_%H-%M-%S")}.log' \
         if params.local_rank in [-1, 0] else None
