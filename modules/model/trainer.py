@@ -208,16 +208,18 @@ class Trainer:
 
         max_len = max([len(item.input_ids) for item in items])
         tokens = pad_token_id * np.ones((batch_size, max_len), dtype=np.int64)
-        token_type_ids = np.ones((batch_size, max_len), dtype=np.int64)
+        # todo: wtf
+        token_type_ids = np.zeros((batch_size, max_len), dtype=np.int64) if self.tokenizer.model_name == 'roberta' \
+            else np.ones((batch_size, max_len), dtype=np.int64)
 
         for i, item in enumerate(items):
             row = item.input_ids
 
             tokens[i, :len(row)] = row
-            token_type_id = [0 if i <= row.index(102) else 1
-                             for i in range(len(row))]  # 102 corresponds to [SEP]
-
-            token_type_ids[i, :len(row)] = token_type_id
+            # todo: wtf
+            if self.tokenizer.model_name == 'bert':
+                token_type_id = [0 if i <= row.index(self.tokenizer.sep_token_id) else 1 for i in range(len(row))]
+                token_type_ids[i, :len(row)] = token_type_id
 
         attention_mask = tokens > 0
         inputs = [torch.from_numpy(tokens),

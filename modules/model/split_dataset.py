@@ -232,7 +232,7 @@ class SplitDataset:
         return len(self.indexes)
 
     @staticmethod
-    def _drop_tags(tokenizer, text):
+    def _drop_tags_and_encode(tokenizer, text):
         text = text.split()
 
         o2t = []
@@ -244,7 +244,7 @@ class SplitDataset:
             if re.match(r'<.+>', word):
                 continue
 
-            word_tokens = tokenizer.tokenize(word)
+            word_tokens = tokenizer.encode(word)
             for token in word_tokens:
                 t2o.append(word_i)
                 tokenized_text.append(token)
@@ -252,8 +252,8 @@ class SplitDataset:
         return tokenized_text, o2t, t2o
 
     def _split_doc(self, line):
-        tokenized_text, o2t, t2o = SplitDataset._drop_tags(self.tokenizer, line['document_text'])
-        tokenized_question = self.tokenizer.tokenize(line['question_text'])[:self.max_question_len]
+        encoded_text, o2t, t2o = SplitDataset._drop_tags_and_encode(self.tokenizer, line['document_text'])
+        encoded_question = self.tokenizer.encode(line['question_text'])[:self.max_question_len]
 
         class_label, start_position, end_position = RawPreprocessor._get_target(line)
 
@@ -262,18 +262,18 @@ class SplitDataset:
 
         example_id = line['example_id']
 
-        document_len = self.max_seq_len - len(tokenized_question) - 3  # [CLS], [SEP], [SEP]
+        document_len = self.max_seq_len - len(encoded_question) - 3  # [CLS], [SEP], [SEP]
 
         samples = []
         weights = []
 
-        for doc_start in range(0, len(tokenized_text), self.doc_stride):
+        for doc_start in range(0, len(encoded_text), self.doc_stride):
             doc_end = doc_start + document_len
             if not (doc_start <= start_position and end_position <= doc_end):
                 start, end, label = -1, -1, 'unknown'
             else:
-                start = start_position - doc_start + len(tokenized_question) + 2
-                end = end_position - doc_start + len(tokenized_question) + 2
+                start = start_position - doc_start + len(encoded_question) + 2
+                end = end_position - doc_start + len(encoded_question) + 2
                 label = class_label
 
             weights.append(self.label2weight[label])
@@ -288,15 +288,13 @@ class SplitDataset:
         idx = np.random.choice(np.arange(len(samples)), 1, p=weights)[0]
         start, end, label, doc_start, doc_end = samples[idx]
 
-        chunk_text = tokenized_text[doc_start: doc_end]
-        input_tokens = [self.tokenizer.cls_token] + tokenized_question + \
-                       [self.tokenizer.sep_token] + chunk_text + \
-                       [self.tokenizer.sep_token]
+        chunk = encoded_text[doc_start: doc_end]
+        input_ids = [self.tokenizer.cls_token_id] + encoded_question + \
+                    [self.tokenizer.sep_token_id] + chunk + \
+                    [self.tokenizer.sep_token_id]
 
         assert -1 <= start <= self.max_seq_len, f'Incorrect start index: {start}.'
         assert -1 <= end <= self.max_seq_len, f'Incorrect start index: {end}.'
-
-        input_ids = self.tokenizer.convert_tokens_to_ids(input_tokens)
 
         return DatasetItem(input_ids=input_ids,
                            start_id=start,
