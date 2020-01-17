@@ -42,20 +42,37 @@ def get_datasets(params, *, tokenizer=None, clear=False):
                                    clear=clear)
     labels_counter, labels, (train_indexes, train_labels, test_indexes, test_labels) = preprocessor()
 
-    train_weights = np.asarray([1 / (labels_counter[label]) for label in train_labels])
-    train_weights = train_weights / np.sum(train_weights)
+    weights = defaultdict(lambda: None)
+
+    if params.train_label_weights:
+        label_weights = np.asarray([1 / labels_counter[k] for k in sorted(labels_counter.keys())])
+        label_weights = label_weights / np.sum(label_weights)
+
+        logger.info(f'Label weights: {", ".join([f"{RawPreprocessor.id2labels[k]} ({k}) - {v:.4f}" for k, v in enumerate(label_weights)])}.')
+
+        weights['label_weights'] = torch.from_numpy(label_weights)
+
+    if params.train_sampler_weights:
+        sampler_weights = np.asarray([1 / (labels_counter[label]) for label in train_labels])
+        sampler_weights = sampler_weights / np.sum(sampler_weights)
+
+        weights['sampler_weights'] = sampler_weights
 
     train_dataset = SplitDataset(params.processed_data_path, tokenizer, train_indexes,
                                  max_seq_len=params.max_seq_len,
                                  max_question_len=params.max_question_len,
-                                 doc_stride=params.doc_stride)
+                                 doc_stride=params.doc_stride,
+                                 split_by_sentence=params.split_by_sentence,
+                                 truncate=params.truncate)
     test_dataset = SplitDataset(params.processed_data_path, tokenizer, test_indexes, test=True,
                                 max_seq_len=params.max_seq_len,
                                 max_question_len=params.max_question_len,
-                                doc_stride=params.doc_stride) \
+                                doc_stride=params.doc_stride,
+                                split_by_sentence=params.split_by_sentence,
+                                truncate=params.truncate) \
         if params.local_rank in [-1, 0] else None
 
-    return train_dataset, test_dataset, train_weights
+    return train_dataset, test_dataset, weights
 
 
 def run_worker(device, params, model_params):

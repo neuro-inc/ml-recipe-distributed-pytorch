@@ -149,10 +149,16 @@ class Trainer:
         logger.info(f'APEX optimization level: {self.apex_level}. APEX verbosity: {self.apex_verbosity}.')
 
         if local_rank == -1:
-            train_sampler = RandomSampler(train_dataset) if train_weights is None \
-                else WeightedRandomSampler(train_weights, len(train_weights))
+            if train_weights is None or train_weights['sampler_weights'] is None:
+                train_sampler = RandomSampler(train_dataset)
+            else:
+                assert len(train_weights['sampler_weights']) == len(train_dataset)
+                train_sampler = WeightedRandomSampler(train_weights['sampler_weights'],
+                                                      len(train_dataset))
         else:
             train_sampler = DistributedSampler(train_dataset)
+
+        logger.info(f'Used train sampler: {type(train_sampler).__name__}.')
 
         self.train_dataloader = torch.utils.data.DataLoader(train_dataset,
                                                             batch_size=int(train_batch_size // batch_split),
@@ -175,7 +181,7 @@ class Trainer:
         self.end_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma, ignore_index=-1) if focal \
             else nn.CrossEntropyLoss(ignore_index=-1)
         self.cls_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma) if focal \
-            else nn.CrossEntropyLoss()
+            else nn.CrossEntropyLoss(weight=self._to_device(train_weights['label_weights']))
 
         self.w_start = w_start
         self.w_end = w_end
@@ -293,12 +299,28 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
     def set_train(self):
-        for module in self.modules:
-            module.train()
+        if self.apex_level is not None:
+            self.model.train()
+        else:
+            for module in self.modules:
+                module.train()
 
     def set_eval(self):
-        for module in self.modules:
-            module.eval()
+        if self.apex_level is not None:
+            self.model.eval()
+        else:
+            for module in self.modules:
+                module.eval()
+
+    def _to_device(self, data):
+        if isinstance(data, (list, tuple)):
+            return [self._to_device(d) for d in data]
+        elif isinstance(data, torch.Tensor):
+            return data.to(self.device)
+        elif data is None:
+            return data
+        else:
+            raise NotImplemented
 
     def train(self, after_epoch_funcs=None):
         after_epoch_funcs = [] if after_epoch_funcs is None else after_epoch_funcs
@@ -313,7 +335,6 @@ class Trainer:
             run_after_funcs()
 
     def _train(self, epoch_i):
-        # self.model.train()
         self.set_train()
         self.optimizer.zero_grad()
 
@@ -322,19 +343,13 @@ class Trainer:
         tqdm_data = tqdm(self.train_dataloader, desc=f'Train (epoch #{epoch_i} / {self.n_epochs})')
 
         for i, (inputs, labels) in enumerate(tqdm_data):
-            (input_ids, attention_mask, token_type_ids) = (input_.to(self.device) for input_ in inputs)
-            labels = [label.to(self.device) for label in labels]
-
-            # print(labels[-1])
+            (input_ids, attention_mask, token_type_ids), labels = self._to_device((inputs, labels))
 
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,
                                      token_type_ids=token_type_ids)
-            loss = self._loss(pred_logits, labels, avg_losses=avg_losses)
 
-            loss = loss / self.batch_split if self.batch_split > 1 else loss
-
-            self._backward(loss)
+            self._backward(self._loss(pred_logits, labels, avg_losses=avg_losses))
 
             avg_losses['lr'] = self.get_lr()
 
@@ -366,7 +381,6 @@ class Trainer:
             torch.distributed.barrier()
 
     def _test(self, epoch_i):
-        # self.model.eval()
         self.set_eval()
 
         avg_losses = defaultdict(AverageMeter)
@@ -375,8 +389,7 @@ class Trainer:
         tqdm_data = tqdm(self.test_dataloader, desc=f'Test (epoch #{epoch_i} / {self.n_epochs})')
 
         for i, (inputs, labels) in enumerate(tqdm_data):
-            (input_ids, attention_mask, token_type_ids) = (input_.to(self.device) for input_ in inputs)
-            labels = [label.to(self.device) for label in labels]
+            (input_ids, attention_mask, token_type_ids), labels = self._to_device((inputs, labels))
 
             pred_logits = self.model(input_ids=input_ids,
                                      attention_mask=attention_mask,

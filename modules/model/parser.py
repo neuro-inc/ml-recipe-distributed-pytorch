@@ -152,7 +152,14 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
 
     parser.add_argument('--optimizer', type=str, default='adam', choices=['adam', 'adamod'], help='')
 
-    parser.add_argument('--log_file', type=str, default=None, help='')
+    parser.add_argument('--split_by_sentence', action='store_true', help='')
+    parser.add_argument('--truncate', action='store_true', help='')
+
+    parser.add_argument('--train_label_weights', action='store_true', help='')
+    parser.add_argument('--train_sampler_weights', action='store_true', help='')
+
+    parser.add_argument('--log_file', type=str, default=None, help='This parameter is ignored. After dump will '
+                                                                   'consist path to log file.')
 
     return parser
 
