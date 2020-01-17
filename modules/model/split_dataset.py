@@ -203,6 +203,8 @@ class DatasetItem(object):
     start_id: int
     end_id: int
     label_id: int
+    start_position: float
+    end_position: float
 
 
 class SplitDataset:
@@ -322,7 +324,9 @@ class SplitDataset:
                            start_id=start,
                            end_id=end,
                            label_id=self.labels2id[label],
-                           example_id=example_id)
+                           example_id=example_id,
+                           start_position=start / self.max_seq_len,
+                           end_position=end / self.max_seq_len)
 
     def _split_doc_by_sentence(self, line):
         text = line['document_text']
@@ -463,7 +467,9 @@ class SplitDataset:
                            start_id=start,
                            end_id=end,
                            label_id=self.labels2id[label],
-                           example_id=example_id)
+                           example_id=example_id,
+                           start_position=start / self.max_seq_len,
+                           end_position=end / self.max_seq_len)
 
     def __getitem__(self, idx):
         idx = self.indexes[idx]

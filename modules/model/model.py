@@ -10,6 +10,10 @@ from .tokenizer import Tokenizer
 logger = logging.getLogger(__name__)
 
 
+MODELS = {'bert': BertModel,
+          'roberta': RobertaModel}
+
+
 def _load_checkpoint(model, checkpoint, *, device=torch.device('cpu')):
     if checkpoint is not None:
         state_dict = torch.load(checkpoint, map_location=device)
@@ -19,24 +23,20 @@ def _load_checkpoint(model, checkpoint, *, device=torch.device('cpu')):
 
 
 def get_model(model_params, *, checkpoint=None, device=torch.device('cpu'), bpe_dropout=None):
-    model = model_params.model
-    model_name = model.split('-')[0]
+    model_params.model_name = model_params.model.split('-')[0]
 
     # todo: https://github.com/huggingface/transformers/issues/2392
-    model = model if 'roberta' not in model else './data/roberta'
+    model_params.model = './data/roberta' if model_params.model_name == 'roberta' else model_params.model
 
-    tokenizer = Tokenizer(model_name=model_name,
+    tokenizer = Tokenizer(model_name=model_params.model_name,
                           vocab_file=model_params.vocab_file,
                           merges_file=model_params.merges_file,
                           lowercase=model_params.lowercase,
                           handle_chinese_chars=model_params.handle_chinese_chars,
                           dropout=bpe_dropout)
 
-    model = BertForQuestionAnswering.from_pretrained(model,
-                                                     hidden_dropout_prob=model_params.hidden_dropout_prob,
-                                                     attention_probs_dropout_prob=model_params.attention_probs_dropout_prob,
-                                                     layer_norm_eps=model_params.layer_norm_eps,
-                                                     num_labels=len(RawPreprocessor.labels2id))
+    model = BertForQuestionAnswering(model_params)
+
     model.to(device)
 
     if checkpoint is not None:
@@ -45,7 +45,7 @@ def get_model(model_params, *, checkpoint=None, device=torch.device('cpu'), bpe_
     return model, tokenizer
 
 
-class BertForQuestionAnswering(BertPreTrainedModel):
+class BertForQuestionAnswering(nn.Module):
     """BERT model for QA and classification tasks.
 
     Parameters
@@ -61,17 +61,33 @@ class BertForQuestionAnswering(BertPreTrainedModel):
     classifier_logits : torch.Tensor with shape (batch_size, num_classes).
         Classification scores of each labels.
     """
-    def __init__(self, config):
-        super().__init__(config)
-        # todo: pass args to model
-        self.transformer = RobertaModel(config) if config.type_vocab_size == 1 else BertModel(config)
+    def __init__(self, model_params):
+        super().__init__()
 
+        self.model_params = model_params
+
+        self.transformer = MODELS[model_params.model_name].\
+            from_pretrained(model_params.model,
+                            hidden_dropout_prob=model_params.hidden_dropout_prob,
+                            attention_probs_dropout_prob=model_params.attention_probs_dropout_prob,
+                            layer_norm_eps=model_params.layer_norm_eps,
+                            num_labels=len(RawPreprocessor.labels2id))
+
+        config = self.transformer.config
+
+        # if self.model_params.out_class_pos:
         self.position_outputs = nn.Linear(config.hidden_size, 2)  # start/end
 
+        # if self.model_params.out_chunk_class:
         self.classifier = nn.Sequential(nn.Dropout(config.hidden_dropout_prob),
                                         nn.Linear(config.hidden_size, config.num_labels))
 
-        self.init_weights()
+        # if self.model_params.out_reg_pos:
+        self.reg_start = nn.Sequential(nn.Linear(config.hidden_size, 1),
+                                       nn.Sigmoid())
+
+        self.reg_end = nn.Sequential(nn.Linear(config.hidden_size, 1),
+                                     nn.Sigmoid())
 
     def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None):
         outputs = self.transformer(input_ids,
@@ -93,4 +109,8 @@ class BertForQuestionAnswering(BertPreTrainedModel):
         # classification
         classifier_logits = self.classifier(pooled_output)
 
-        return start_logits, end_logits, classifier_logits
+        # regression
+        reg_start = self.reg_start(pooled_output)
+        reg_end = self.reg_end(pooled_output)
+
+        return start_logits, end_logits, reg_start, reg_end, classifier_logits

@@ -97,6 +97,8 @@ def run_worker(device, params, model_params):
                       w_start=params.w_start,
                       w_end=params.w_end,
                       w_cls=params.w_cls,
+                      w_start_pos=params.w_start_pos,
+                      w_end_pos=params.w_end_pos,
                       focal=params.focal,
                       focal_alpha=params.focal_alpha,
                       focal_gamma=params.focal_gamma,

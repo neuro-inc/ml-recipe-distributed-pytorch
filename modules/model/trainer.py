@@ -90,6 +90,8 @@ class Trainer:
                  w_start=1,
                  w_end=1,
                  w_cls=1,
+                 w_start_pos=1,
+                 w_end_pos=1,
                  focal=False,
                  focal_alpha=1,
                  focal_gamma=2,
@@ -199,9 +201,13 @@ class Trainer:
         self.cls_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma) if focal \
             else nn.CrossEntropyLoss(weight=self._to_device(train_weights['label_weights']))
 
+        self.reg_loss = nn.MSELoss()
+
         self.w_start = w_start
         self.w_end = w_end
         self.w_cls = w_cls
+        self.w_start_pos = w_start_pos
+        self.w_end_pos = w_end_pos
 
         self.max_grad_norm = max_grad_norm
 
@@ -264,29 +270,46 @@ class Trainer:
         start_ids = np.array([item.start_id for item in items])
         end_ids = np.array([item.end_id for item in items])
 
+        start_pos = np.array([item.start_position for item in items])
+        end_pos = np.array([item.end_position for item in items])
+
         label_ids = [item.label_id for item in items]
 
         labels = [torch.LongTensor(start_ids),
                   torch.LongTensor(end_ids),
+                  torch.FloatTensor(start_pos),
+                  torch.FloatTensor(end_pos),
                   torch.LongTensor(label_ids)]
 
         return [inputs, labels]
 
     def _loss(self, preds, labels, *, avg_losses=None):
-        start_preds, end_preds, cls_preds = preds
-        start_labels, end_labels, cls_labels = labels
+        # todo:
+        start_preds, end_preds,  start_pos_pred, end_pos_pred, cls_preds = preds
+        start_labels, end_labels, start_pos, end_pos, cls_labels = labels
 
         start_loss = self.start_loss(start_preds, start_labels)
         end_loss = self.end_loss(end_preds, end_labels)
         cls_loss = self.cls_loss(cls_preds, cls_labels)
 
-        losses = (self.w_start * start_loss, self.w_end * end_loss, self.w_cls * cls_loss)
+        # print(start_pos_pred.size(), start_pos.size())
+        start_reg_loss = self.reg_loss(start_pos_pred.squeeze(-1), start_pos)
+        end_reg_loss = self.reg_loss(end_pos_pred.squeeze(-1), end_pos)
+
+        losses = (self.w_start * start_loss,
+                  self.w_end * end_loss,
+                  self.w_cls * cls_loss,
+                  self.w_start_pos * start_reg_loss,
+                  self.w_end_pos * end_reg_loss)
         loss = sum(losses, 0)
 
         if avg_losses is not None:
             avg_losses['start_loss'].update(start_loss.item())
             avg_losses['end_loss'].update(end_loss.item())
             avg_losses['cls_loss'].update(cls_loss.item())
+
+            avg_losses['start_rl'].update(start_reg_loss.item())
+            avg_losses['end_rl'].update(end_reg_loss.item())
 
             avg_losses['loss'].update(loss)
 
@@ -431,8 +454,8 @@ class Trainer:
 
             _ = self._loss(pred_logits, labels, avg_losses=avg_losses)
 
-            start_logits, end_logits, cls_logits = (logits.detach().cpu() for logits in pred_logits)
-            start_true, end_true, cls_true = (label.detach().cpu() for label in labels)
+            start_logits, end_logits, _, _, cls_logits = (logits.detach().cpu() for logits in pred_logits)
+            start_true, end_true, _, _, cls_true = (label.detach().cpu() for label in labels)
 
             start_pred, end_pred, cls_pred = (torch.max(logits, dim=-1)[1] for logits in (start_logits, end_logits, cls_logits))
 

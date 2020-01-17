@@ -114,6 +114,8 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--w_start', type=float, default=1, help='')
     parser.add_argument('--w_end', type=float, default=1, help='')
     parser.add_argument('--w_cls', type=float, default=1, help='')
+    parser.add_argument('--w_start_pos', type=float, default=0, help='')
+    parser.add_argument('--w_end_pos', type=float, default=0, help='')
 
     parser.add_argument('--focal', action='store_true', help='')
     parser.add_argument('--focal_alpha', type=float, default=1, help='')
