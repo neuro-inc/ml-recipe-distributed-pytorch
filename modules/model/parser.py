@@ -126,6 +126,7 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
 
     parser.add_argument('--apex_level', type=cast2(str), default=None, help='')
     parser.add_argument('--apex_verbosity', type=int, default=1, help='')
+    parser.add_argument('--apex_loss_scale', type=cast2(float), default=None, help='')
 
     parser.add_argument('--drop_optimizer', action='store_true', help='')
 

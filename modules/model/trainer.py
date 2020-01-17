@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 
 import torch
 import torch.nn as nn
@@ -9,6 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import AdamW, get_linear_schedule_with_warmup
 
+from .optim import AdaMod
 from .loss import FocalLossWithLogits
 from .meters import *
 from .split_dataset import RawPreprocessor
@@ -16,14 +18,18 @@ from .split_dataset import RawPreprocessor
 logger = logging.getLogger(__file__)
 
 
-def initialize_apex(model, optimizer, apex_level=None, apex_verbosity=0):
+def initialize_apex(model, *, optimizer=None, apex_level=None,
+                    apex_loss_scale=None, apex_num_losses=1, apex_verbosity=0):
     if apex_level is not None:
         try:
             from apex import amp
         except ImportError:
             raise ImportError('Install Apex to train model with mixed precision.')
 
-        model, optimizer = amp.initialize(model, optimizer, opt_level=apex_level,
+        model, optimizer = amp.initialize(model, optimizer,
+                                          opt_level=apex_level,
+                                          loss_scale=apex_loss_scale,
+                                          num_losses=apex_num_losses,
                                           verbosity=apex_verbosity)
 
     return model, optimizer
@@ -90,6 +96,7 @@ class Trainer:
                  warmup_coef=0.01,
                  apex_level=None,
                  apex_verbosity=1,
+                 apex_loss_scale=None,
                  drop_optimizer=False,
                  train_weights=None,
                  debug=False,
@@ -100,7 +107,8 @@ class Trainer:
                  finetune=False,
                  finetune_transformer=False,
                  finetune_position=False,
-                 finetune_class=False
+                 finetune_class=False,
+                 optimizer='adam'
                  ):
 
         if sync_bn and local_rank != -1:
@@ -112,7 +120,12 @@ class Trainer:
                 model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
                 logger.info('BatchNorm was synchronized across nodes with Pytorch module.')
 
-        self.model = model.to(device)
+        self.device = device
+        self.model = model.to(self.device)
+
+        if finetune and apex_level is not None:
+            logger.warning(f'Finetune mode is not supported with Apex.')
+            apex_level = None
 
         self.modules, optimizer_grouped_parameters = get_optimized_parameters(self.model, weight_decay,
                                                                               finetune=finetune,
@@ -128,13 +141,16 @@ class Trainer:
         logger.info(f'Test Dataset len: {len(test_dataset)}. #JOBS: {n_jobs}.')
         logger.info(f'Training steps number: {num_training_steps}. Warmup steps number: {num_warmup_steps}.')
 
-        self.optimizer = AdamW(optimizer_grouped_parameters, lr=lr, correct_bias=False)
+        self.optimizer = AdamW(optimizer_grouped_parameters, lr=lr, correct_bias=False) if optimizer == 'adam' \
+            else AdaMod(optimizer_grouped_parameters, lr=lr)
         self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=num_warmup_steps,
                                                          num_training_steps=num_training_steps) \
             if num_warmup_steps else None
 
-        self.model, self.optimizer = initialize_apex(self.model,  self.optimizer,
-                                                     apex_level=apex_level, apex_verbosity=apex_verbosity)
+        self.model, self.optimizer = initialize_apex(self.model, optimizer=self.optimizer,
+                                                     apex_level=apex_level,
+                                                     apex_verbosity=apex_verbosity,
+                                                     apex_loss_scale=apex_loss_scale)
 
         if local_rank != -1:
             if gpu_id is not None:
@@ -189,7 +205,6 @@ class Trainer:
 
         self.max_grad_norm = max_grad_norm
 
-        self.device = device
         self.local_rank = local_rank
         self.batch_split = batch_split
         self.n_epochs = n_epochs
@@ -201,9 +216,22 @@ class Trainer:
         if self.debug:
             self.n_epochs = 1
 
-        self.writer = SummaryWriter(log_dir=writer_dir) if self.local_rank in [-1, 0] else None
+        self.writer = Trainer._init_writer(local_rank, writer_dir)
 
         self.metrics = None
+
+        self.average_loss = True
+
+    @staticmethod
+    def _init_writer(local_rank, writer_dir):
+        writer = None
+        if local_rank in [-1, 0]:
+            logger.warning(f'Directory {writer_dir} will be cleaned before SummaryWriter initialization. '
+                           f'To prevent missing important information, use different experiment names.')
+            shutil.rmtree(writer_dir, ignore_errors=True)
+            writer = SummaryWriter(log_dir=writer_dir)
+
+        return writer
 
     def get_lr(self):
         return self.optimizer.param_groups[0]['lr']
@@ -230,8 +258,7 @@ class Trainer:
         attention_mask = tokens > 0
         inputs = [torch.from_numpy(tokens),
                   torch.from_numpy(attention_mask),
-                  torch.from_numpy(token_type_ids),
-                  ]
+                  torch.from_numpy(token_type_ids)]
 
         # output labels
         start_ids = np.array([item.start_id for item in items])
@@ -241,8 +268,7 @@ class Trainer:
 
         labels = [torch.LongTensor(start_ids),
                   torch.LongTensor(end_ids),
-                  torch.LongTensor(label_ids),
-                  ]
+                  torch.LongTensor(label_ids)]
 
         return [inputs, labels]
 
@@ -254,18 +280,21 @@ class Trainer:
         end_loss = self.end_loss(end_preds, end_labels)
         cls_loss = self.cls_loss(cls_preds, cls_labels)
 
-        loss = self.w_start * start_loss + self.w_end * end_loss + self.w_cls * cls_loss
+        losses = (self.w_start * start_loss, self.w_end * end_loss, self.w_cls * cls_loss)
+        loss = sum(losses, 0)
 
         if avg_losses is not None:
             avg_losses['start_loss'].update(start_loss.item())
             avg_losses['end_loss'].update(end_loss.item())
             avg_losses['cls_loss'].update(cls_loss.item())
 
-            avg_losses['loss'].update(loss.item())
+            avg_losses['loss'].update(loss)
 
         return loss
 
     def _backward(self, loss):
+        loss = loss / self.batch_split
+
         if self.apex_level is not None:
             try:
                 from apex import amp
@@ -278,11 +307,16 @@ class Trainer:
             loss.backward()
 
     @staticmethod
+    def _get_console_str(losses):
+        return ', '.join([f'{k}: {losses[k]() if isinstance(losses[k], AverageMeter) else losses[k]:.3e}'
+                         for k in losses.keys()])
+
+    @staticmethod
     def _update_console(tqdm_data, losses):
-        tqdm_data.set_postfix({k: v() if isinstance(v, AverageMeter) else v for k, v in losses.items()})
+        tqdm_data.set_postfix_str(Trainer._get_console_str(losses))
 
     def _update_writer(self, losses, *, prefix=None):
-        if self.local_rank in [-1, 0]:
+        if self.writer is not None:
             for k, v in losses.items():
                 self.writer.add_scalar(f'{prefix}/{k}', v() if isinstance(v, AverageMeter) else v,
                                        global_step=self.global_step)
@@ -424,9 +458,8 @@ class Trainer:
         avg_losses.update(map_meter())
         self._update_writer(avg_losses, prefix='test')
 
-        out_dict = {k: v() if isinstance(v, AverageMeter) else v for k, v in avg_losses.items()}
-        logger.info(f'Test metrics after epoch {epoch_i}: {out_dict}')
-        self.metrics = out_dict
+        self.metrics = {k: v() if isinstance(v, AverageMeter) else v for k, v in avg_losses.items()}
+        logger.info(f'Test metrics after epoch {epoch_i} - {Trainer._get_console_str(self.metrics)}')
 
     def save_state_dict(self, path_):
         if self.local_rank not in [-1, 0]:
