@@ -1,39 +1,17 @@
-import math
 import logging
+import math
 import os
-import random
 from datetime import datetime
+from collections import defaultdict
 
 import numpy as np
 import torch
 import torch.multiprocessing as mp
-from model.model import BertForQuestionAnswering
-from model.parser import get_trainer_parser, get_model_parser, write_config_file
+from model.model import get_model
+from model.parser import get_trainer_parser, get_model_parser, write_config_file, get_params
 from model.split_dataset import RawPreprocessor, SplitDataset
 from model.trainer import Trainer
-from transformers import BertTokenizer
-
-
-def set_seed(seed=None):
-    if seed is not None:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = True
-        torch.manual_seed(seed)
-
-        random.seed(seed)
-        np.random.seed(seed)
-
-        logger.info(f'Random seed was set to {seed}. It can affect speed of training and performance of result model.')
-
-
-def get_model(model_params):
-    bert_model = model_params.model
-    do_lower_case = 'uncased' in bert_model
-
-    tokenizer = BertTokenizer.from_pretrained(bert_model, do_lower_case=do_lower_case)
-    model = BertForQuestionAnswering.from_pretrained(bert_model, num_labels=len(RawPreprocessor.labels2id))
-
-    return model, tokenizer
+from utils import *
 
 
 def get_datasets(params, *, tokenizer=None, clear=False):
@@ -99,11 +77,11 @@ def run_worker(device, params, model_params):
 
     log_file = params.log_file if params.local_rank in [-1, 0] else None
     log_level = logging.INFO if params.local_rank in [-1, 0] else logging.WARN
-    logger = get_logger(level=log_level, filename=log_file, filemode='a')
+    logger = get_logger(level=log_level, filename=log_file, filemode='a', logger_name='train')
 
     logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
 
-    model, tokenizer = get_model(model_params)
+    model, tokenizer = get_model(model_params, bpe_dropout=params.bpe_dropout)
     train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer=tokenizer, clear=False)
 
     trainer = Trainer(model, tokenizer, train_dataset, test_dataset,
@@ -125,6 +103,7 @@ def run_worker(device, params, model_params):
                       warmup_coef=params.warmup_coef,
                       apex_level=params.apex_level,
                       apex_verbosity=params.apex_verbosity,
+                      apex_loss_scale=params.apex_loss_scale,
                       train_weights=train_weights,
                       drop_optimizer=params.drop_optimizer,
                       max_grad_norm=params.max_grad_norm,
@@ -135,7 +114,8 @@ def run_worker(device, params, model_params):
                       finetune=params.finetune,
                       finetune_transformer=params.finetune_transformer,
                       finetune_position=params.finetune_position,
-                      finetune_class=params.finetune_class
+                      finetune_class=params.finetune_class,
+                      optimizer=params.optimizer
                       )
 
     if params.last is not None:
@@ -164,7 +144,10 @@ def run_worker(device, params, model_params):
                         self.value = trainer.metrics[self.metric]
                         trainer.save_state_dict(params.dump_dir / params.experiment_name / f'best.ch')
                         logger.info(f'Best value of {self.metric} was achieved after training step {trainer.global_step} '
-                                    f'and equals to {self.value}')
+                                    f'and equals to {self.value:.3f}')
+                    else:
+                        logger.info(f'Best value {self.value:.3f} of {self.metric} was not bitten '
+                                    f'with {trainer.metrics[self.metric]:.3f}')
                 else:
                     logger.warning(f'Trainer metrics do not contain metric {self.metric}.')
 
@@ -176,12 +159,6 @@ def run_worker(device, params, model_params):
     except Exception as e:
         logger.error(e)
         raise e
-
-
-def show_params(params, name):
-    logger.info(f'Input {name} parameters:')
-    for k in sorted(params.__dict__.keys()):
-        logger.info(f'\t{k}: {getattr(params, k)}')
 
 
 def main(params, model_params) -> None:
@@ -210,50 +187,20 @@ def main(params, model_params) -> None:
         run_worker(device, params, model_params)
 
 
-def get_logger(level=logging.INFO, filename=None, filemode='w'):
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
-
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                        datefmt='%m/%d/%Y %H:%M:%S',
-                        level=level,
-                        handlers=[logging.StreamHandler(),
-                                  logging.FileHandler(filename, filemode)])
-
-    logging.getLogger('transformers').setLevel('CRITICAL')
-
-    logger = logging.getLogger(__file__)
-    if filename is not None and filemode == 'w':
-        logger.info(f'All logs will be dumped to {filename}.')
-
-    return logger
-
-
 if __name__ == '__main__':
-    parser = get_trainer_parser()
-    params, unused = parser.parse_known_args()
+    (parser, model_parser), (params, model_params) = get_params((get_trainer_parser, get_model_parser))
 
     os.makedirs(params.dump_dir / params.experiment_name, exist_ok=True)
-
-    model_parser = get_model_parser()
-    model_params, model_unused = model_parser.parse_known_args()
-
-    unused = set(model_unused) & set(unused)
-    if unused:
-        parser.print_help()
-        model_parser.print_help()
-        print(f'Incorrect command line parameters: {unused}.')
-        exit()
 
     params.log_file = params.dump_dir / params.experiment_name / f'{datetime.now().strftime("%d-%m-%Y_%H-%M-%S")}.log' \
         if params.local_rank in [-1, 0] else None
 
-    logger = get_logger(filename=params.log_file, filemode='w')
+    params.n_jobs = min(params.n_jobs, mp.cpu_count() // 2)
+
+    logger = get_logger(filename=params.log_file, filemode='w', logger_name='train')
 
     if params.local_rank in [0, -1]:
         write_config_file(parser, params, params.dump_dir / params.experiment_name / 'trainer.cfg')
         write_config_file(model_parser, model_params, params.dump_dir / params.experiment_name / 'model.cfg')
-
-    params.n_jobs = min(params.n_jobs, mp.cpu_count() // 2)
 
     main(params, model_params)
