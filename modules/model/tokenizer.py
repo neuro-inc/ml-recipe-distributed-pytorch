@@ -55,6 +55,9 @@ class Tokenizer:
     def encode(self, string):
         return self.tokenizer.encode(string).ids
 
+    def decode(self, ids, *, skip_special_tokens=True):
+        return self.tokenizer.decode(ids, skip_special_tokens=skip_special_tokens).replace(' ##', '')
+
     @property
     def pad_token_id(self):
         return self.tokenizer.token_to_id(self._pad_token)
