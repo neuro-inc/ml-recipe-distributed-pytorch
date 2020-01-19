@@ -2,7 +2,7 @@ import logging
 
 import torch
 import torch.nn as nn
-from transformers import BertPreTrainedModel, BertModel, RobertaModel, RobertaTokenizer
+from transformers import BertModel, RobertaModel
 
 from .split_dataset import RawPreprocessor
 from .tokenizer import Tokenizer
@@ -110,7 +110,13 @@ class BertForQuestionAnswering(nn.Module):
         classifier_logits = self.classifier(pooled_output)
 
         # regression
-        reg_start = self.reg_start(pooled_output)
-        reg_end = self.reg_end(pooled_output)
+        reg_start = self.reg_start(pooled_output).squeeze(-1)
+        reg_end = self.reg_end(pooled_output).squeeze(-1)
 
-        return start_logits, end_logits, reg_start, reg_end, classifier_logits
+        result = {'start_class': start_logits,
+                  'end_class': end_logits,
+                  'start_reg': reg_start,
+                  'end_reg': reg_end,
+                  'cls': classifier_logits}
+
+        return result

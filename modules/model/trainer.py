@@ -10,9 +10,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import AdamW, get_linear_schedule_with_warmup
 
-from .optim import AdaMod
-from .loss import FocalLossWithLogits
 from .meters import *
+from .optim import AdaMod
 from .split_dataset import RawPreprocessor
 
 logger = logging.getLogger(__file__)
@@ -78,7 +77,7 @@ def get_optimized_parameters(model, weight_decay, *,
 
 
 class Trainer:
-    def __init__(self, model, tokenizer, train_dataset, test_dataset, writer_dir, *,
+    def __init__(self, model, loss, tokenizer, train_dataset, test_dataset, writer_dir,*,
                  device=torch.device('cuda'),
                  train_batch_size=32,
                  test_batch_size=32,
@@ -87,14 +86,6 @@ class Trainer:
                  n_epochs=0,
                  lr=1e-3,
                  weight_decay=5e-4,
-                 w_start=1,
-                 w_end=1,
-                 w_cls=1,
-                 w_start_pos=1,
-                 w_end_pos=1,
-                 focal=False,
-                 focal_alpha=1,
-                 focal_gamma=2,
                  warmup_coef=0.01,
                  apex_level=None,
                  apex_verbosity=1,
@@ -124,6 +115,7 @@ class Trainer:
 
         self.device = device
         self.model = model.to(self.device)
+        self.loss = loss.to(self.device)
 
         if finetune and apex_level is not None:
             logger.warning(f'Finetune mode is not supported with Apex.')
@@ -194,21 +186,6 @@ class Trainer:
                                                            collate_fn=self.collate_fun) \
             if test_dataset is not None else None
 
-        self.start_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma, ignore_index=-1) if focal \
-            else nn.CrossEntropyLoss(ignore_index=-1)
-        self.end_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma, ignore_index=-1) if focal \
-            else nn.CrossEntropyLoss(ignore_index=-1)
-        self.cls_loss = FocalLossWithLogits(alpha=focal_alpha, gamma=focal_gamma) if focal \
-            else nn.CrossEntropyLoss(weight=self._to_device(train_weights['label_weights']))
-
-        self.reg_loss = nn.MSELoss()
-
-        self.w_start = w_start
-        self.w_end = w_end
-        self.w_cls = w_cls
-        self.w_start_pos = w_start_pos
-        self.w_end_pos = w_end_pos
-
         self.max_grad_norm = max_grad_norm
 
         self.local_rank = local_rank
@@ -275,45 +252,13 @@ class Trainer:
 
         label_ids = [item.label_id for item in items]
 
-        labels = [torch.LongTensor(start_ids),
-                  torch.LongTensor(end_ids),
-                  torch.FloatTensor(start_pos),
-                  torch.FloatTensor(end_pos),
-                  torch.LongTensor(label_ids)]
+        labels = {'start_class': torch.LongTensor(start_ids),
+                  'end_class': torch.LongTensor(end_ids),
+                  'start_reg': torch.FloatTensor(start_pos),
+                  'end_reg': torch.FloatTensor(end_pos),
+                  'cls': torch.LongTensor(label_ids)}
 
         return [inputs, labels]
-
-    def _loss(self, preds, labels, *, avg_losses=None):
-        # todo:
-        start_preds, end_preds,  start_pos_pred, end_pos_pred, cls_preds = preds
-        start_labels, end_labels, start_pos, end_pos, cls_labels = labels
-
-        start_loss = self.start_loss(start_preds, start_labels)
-        end_loss = self.end_loss(end_preds, end_labels)
-        cls_loss = self.cls_loss(cls_preds, cls_labels)
-
-        # print(start_pos_pred.size(), start_pos.size())
-        start_reg_loss = self.reg_loss(start_pos_pred.squeeze(-1), start_pos)
-        end_reg_loss = self.reg_loss(end_pos_pred.squeeze(-1), end_pos)
-
-        losses = (self.w_start * start_loss,
-                  self.w_end * end_loss,
-                  self.w_cls * cls_loss,
-                  self.w_start_pos * start_reg_loss,
-                  self.w_end_pos * end_reg_loss)
-        loss = sum(losses, 0)
-
-        if avg_losses is not None:
-            avg_losses['start_loss'].update(start_loss.item())
-            avg_losses['end_loss'].update(end_loss.item())
-            avg_losses['cls_loss'].update(cls_loss.item())
-
-            avg_losses['start_rl'].update(start_reg_loss.item())
-            avg_losses['end_rl'].update(end_reg_loss.item())
-
-            avg_losses['loss'].update(loss)
-
-        return loss
 
     def _backward(self, loss):
         loss = loss / self.batch_split
@@ -374,6 +319,8 @@ class Trainer:
             return [self._to_device(d) for d in data]
         elif isinstance(data, torch.Tensor):
             return data.to(self.device)
+        elif isinstance(data, dict):
+            return {k: self._to_device(v) for k, v in data.items()}
         elif data is None:
             return data
         else:
@@ -395,7 +342,7 @@ class Trainer:
         self.set_train()
         self.optimizer.zero_grad()
 
-        avg_losses = defaultdict(AverageMeter)
+        avg_meters = defaultdict(AverageMeter)
 
         tqdm_data = tqdm(self.train_dataloader, desc=f'Train (epoch #{epoch_i} / {self.n_epochs})')
 
@@ -406,9 +353,9 @@ class Trainer:
                                      attention_mask=attention_mask,
                                      token_type_ids=token_type_ids)
 
-            self._backward(self._loss(pred_logits, labels, avg_losses=avg_losses))
+            self._backward(self.loss(pred_logits, labels, avg_meters=avg_meters))
 
-            avg_losses['lr'] = self.get_lr()
+            avg_meters['lr'] = self.get_lr()
 
             if (i + 1) % self.batch_split == 0:
                 self._clip_grad_norm()
@@ -418,7 +365,7 @@ class Trainer:
                 if self.scheduler is not None:
                     self.scheduler.step()
 
-                self._update_writer(avg_losses, prefix='train')
+                self._update_writer(avg_meters, prefix='train')
 
                 self.global_step += 1
 
@@ -426,7 +373,7 @@ class Trainer:
                     logger.info('Training was interrupted because of debug mode.')
                     break
 
-            Trainer._update_console(tqdm_data, avg_losses)
+            Trainer._update_console(tqdm_data, avg_meters)
 
     def test(self, epoch_i):
         if self.test_dataloader is not None:
@@ -440,10 +387,12 @@ class Trainer:
     def _test(self, epoch_i):
         self.set_eval()
 
-        avg_losses = defaultdict(AverageMeter)
+        avg_meters = defaultdict(AverageMeter)
         map_meter = MAPMeter()
 
         tqdm_data = tqdm(self.test_dataloader, desc=f'Test (epoch #{epoch_i} / {self.n_epochs})')
+
+        keys_ = ['start_class', 'end_class', 'cls']
 
         for i, (inputs, labels) in enumerate(tqdm_data):
             (input_ids, attention_mask, token_type_ids), labels = self._to_device((inputs, labels))
@@ -452,10 +401,10 @@ class Trainer:
                                      attention_mask=attention_mask,
                                      token_type_ids=token_type_ids)
 
-            _ = self._loss(pred_logits, labels, avg_losses=avg_losses)
+            self.loss(pred_logits, labels, avg_meters=avg_meters)
 
-            start_logits, end_logits, _, _, cls_logits = (logits.detach().cpu() for logits in pred_logits)
-            start_true, end_true, _, _, cls_true = (label.detach().cpu() for label in labels)
+            start_logits, end_logits, cls_logits = (pred_logits[k].detach().cpu() for k in keys_)
+            start_true, end_true, cls_true = (labels[k].detach().cpu() for k in keys_)
 
             start_pred, end_pred, cls_pred = (torch.max(logits, dim=-1)[1] for logits in (start_logits, end_logits, cls_logits))
 
@@ -463,25 +412,25 @@ class Trainer:
             end_idxs = end_true != -1
 
             if any(start_idxs):
-                avg_losses['s_acc'].update(metrics.accuracy_score(start_true[start_idxs], start_pred[start_idxs]))
+                avg_meters['s_acc'].update(metrics.accuracy_score(start_true[start_idxs], start_pred[start_idxs]))
             if any(end_idxs):
-                avg_losses['e_acc'].update(metrics.accuracy_score(end_true[end_idxs], end_pred[end_idxs]))
-            avg_losses['c_acc'].update(metrics.accuracy_score(cls_true, cls_pred))
+                avg_meters['e_acc'].update(metrics.accuracy_score(end_true[end_idxs], end_pred[end_idxs]))
+            avg_meters['c_acc'].update(metrics.accuracy_score(cls_true, cls_pred))
 
             map_meter.update(keys=list(RawPreprocessor.labels2id.keys()),
                              pred_probas=torch.softmax(cls_logits, dim=-1).numpy(),
                              true_labels=cls_true.numpy())
 
-            Trainer._update_console(tqdm_data, avg_losses)
+            Trainer._update_console(tqdm_data, avg_meters)
 
             if self.debug:
                 logger.info('Test was interrupted because of debug mode.')
                 break
 
-        avg_losses.update(map_meter())
-        self._update_writer(avg_losses, prefix='test')
+        avg_meters.update(map_meter())
+        self._update_writer(avg_meters, prefix='test')
 
-        self.metrics = {k: v() if isinstance(v, AverageMeter) else v for k, v in avg_losses.items()}
+        self.metrics = {k: v() if isinstance(v, AverageMeter) else v for k, v in avg_meters.items()}
         logger.info(f'Test metrics after epoch {epoch_i} - {Trainer._get_console_str(self.metrics)}')
 
     def save_state_dict(self, path_):

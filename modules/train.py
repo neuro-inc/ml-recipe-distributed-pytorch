@@ -1,12 +1,14 @@
 import logging
 import math
 import os
-from datetime import datetime
 from collections import defaultdict
+from datetime import datetime
 
 import numpy as np
 import torch
 import torch.multiprocessing as mp
+
+from model.loss import init_loss
 from model.model import get_model
 from model.parser import get_trainer_parser, get_model_parser, write_config_file, get_params
 from model.split_dataset import RawPreprocessor, SplitDataset
@@ -83,8 +85,9 @@ def run_worker(device, params, model_params):
 
     model, tokenizer = get_model(model_params, bpe_dropout=params.bpe_dropout)
     train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer=tokenizer, clear=False)
+    loss = init_loss(params, train_weights)
 
-    trainer = Trainer(model, tokenizer, train_dataset, test_dataset,
+    trainer = Trainer(model, loss, tokenizer, train_dataset, test_dataset,
                       writer_dir=params.dump_dir / f'board/{params.experiment_name}',
                       device=device,
                       train_batch_size=params.train_batch_size,
@@ -94,14 +97,6 @@ def run_worker(device, params, model_params):
                       n_epochs=params.n_epochs,
                       lr=params.lr,
                       weight_decay=params.weight_decay,
-                      w_start=params.w_start,
-                      w_end=params.w_end,
-                      w_cls=params.w_cls,
-                      w_start_pos=params.w_start_pos,
-                      w_end_pos=params.w_end_pos,
-                      focal=params.focal,
-                      focal_alpha=params.focal_alpha,
-                      focal_gamma=params.focal_gamma,
                       warmup_coef=params.warmup_coef,
                       apex_level=params.apex_level,
                       apex_verbosity=params.apex_verbosity,
