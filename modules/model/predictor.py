@@ -2,6 +2,7 @@ import logging
 from collections import defaultdict
 
 import torch
+# from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from .async_dataloader import AsyncDatasetProcessor
@@ -43,6 +44,10 @@ class Predictor:
             return [self._to_device(d) for d in data]
         elif isinstance(data, torch.Tensor):
             return data.to(self.device)
+        elif isinstance(data, dict):
+            return {k: self._to_device(v) for k, v in data.items()}
+        elif data is None:
+            return data
         else:
             raise NotImplemented
 
@@ -67,7 +72,21 @@ class Predictor:
 
     @torch.no_grad()
     def __call__(self, dataset, *, save_dump=False):
+        # init_losses = {'start_class': (nn.CrossEntropyLoss(ignore_index=-1), params.w_start),
+        #                'end_class': (nn.CrossEntropyLoss(ignore_index=-1), params.w_end),
+        #                'start_reg': (nn.MSELoss(), params.w_start_reg),
+        #                'end_reg': (nn.MSELoss(), params.w_end_reg),
+        #                'cls': (FocalLossWithLogits(alpha=params.focal_alpha, gamma=params.focal_gamma) if params.focal
+        #                        else nn.CrossEntropyLoss(weight=train_weights['label_weights']), params.w_cls)}
+
+        keys_ = ['start_class', 'end_class', 'cls']
         self.model.eval()
+
+        # async_dataset = DataLoader(dataset,
+        #                            batch_size=self.batch_size,
+        #                            shuffle=True,
+        #                            num_workers=self.n_jobs,
+        #                            collate_fn=self.collate_fun)
 
         async_dataset = AsyncDatasetProcessor(dataset,
                                               batch_size=self.batch_size,
@@ -87,8 +106,8 @@ class Predictor:
                                attention_mask=attention_mask,
                                token_type_ids=token_type_ids)
 
-            start_preds, end_preds, cls_preds = [l.detach().cpu() for l in preds]
-            start_true, end_true, cls_true = labels
+            start_preds, end_preds, cls_preds = [preds[k].detach().cpu() for k in keys_]
+            # start_true, end_true, cls_true = labels
 
             start_logits, start_ids = torch.max(start_preds, dim=-1)
             end_logits, end_ids = torch.max(end_preds, dim=-1)

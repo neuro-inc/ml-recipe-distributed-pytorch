@@ -95,5 +95,5 @@ def init_datasets(params, *, tokenizer=None, clear=False):
     return train_dataset, test_dataset, weights
 
 
-def init_collate_fun(tokenizer):
-    return functools.partial(collate_fun, tokenizer=tokenizer)
+def init_collate_fun(tokenizer, return_items=False):
+    return functools.partial(collate_fun, tokenizer=tokenizer, return_items=return_items)

@@ -395,6 +395,7 @@ class Trainer:
             # Wait till validation ends in main process
             torch.distributed.barrier()
 
+    @torch.no_grad()
     def _test(self, epoch_i, *, callbacks=None):
         self.set_eval()
 

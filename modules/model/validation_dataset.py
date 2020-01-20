@@ -30,6 +30,9 @@ class ChunkItem(object):
 
     question_len: int
 
+    start_position: float
+    end_position: float
+
 
 class ChunkDataset:
     def __init__(self, data_dir, tokenizer, indexes, *,
@@ -54,7 +57,7 @@ class ChunkDataset:
         return len(self.indexes)
 
     @staticmethod
-    def _drop_tags(tokenizer, text):
+    def _drop_tags_and_encode(tokenizer, text):
         text = text.split()
 
         o2t = []
@@ -66,7 +69,7 @@ class ChunkDataset:
             if re.match(r'<.+>', word):
                 continue
 
-            word_tokens = tokenizer.tokenize(word)
+            word_tokens = tokenizer.encode(word)
             for token in word_tokens:
                 t2o.append(word_i)
                 tokenized_text.append(token)
@@ -74,8 +77,8 @@ class ChunkDataset:
         return tokenized_text, o2t, t2o
 
     def _split_doc(self, line):
-        tokenized_text, o2t, t2o = ChunkDataset._drop_tags(self.tokenizer, line['document_text'])
-        tokenized_question = self.tokenizer.tokenize(line['question_text'])[:self.max_question_len]
+        encoded_text, o2t, t2o = ChunkDataset._drop_tags_and_encode(self.tokenizer, line['document_text'])
+        encoded_question = self.tokenizer.encode(line['question_text'])[:self.max_question_len]
 
         class_label, start_position, end_position = RawPreprocessor._get_target(line)
 
@@ -84,29 +87,26 @@ class ChunkDataset:
 
         example_id = line['example_id']
 
-        document_len = self.max_seq_len - len(tokenized_question) - 3  # [CLS], [SEP], [SEP]
+        document_len = self.max_seq_len - len(encoded_question) - 3  # [CLS], [SEP], [SEP]
 
         chunks = []
-        for doc_start in range(0, len(tokenized_text), self.doc_stride):
+        for doc_start in range(0, len(encoded_text), self.doc_stride):
             doc_end = doc_start + document_len
             if not (doc_start <= start_position and end_position <= doc_end):
                 start, end, label = -1, -1, 'unknown'
             else:
-                start = start_position - doc_start + len(tokenized_question) + 2
-                end = end_position - doc_start + len(tokenized_question) + 2
+                start = start_position - doc_start + len(encoded_question) + 2
+                end = end_position - doc_start + len(encoded_question) + 2
                 label = class_label
 
-            chunk_text = tokenized_text[doc_start: doc_end]
-            input_tokens = [self.tokenizer.cls_token] + tokenized_question + \
-                           [self.tokenizer.sep_token] + chunk_text + \
-                           [self.tokenizer.sep_token]
+            chunk_ids = encoded_text[doc_start: doc_end]
+            input_ids = [self.tokenizer.cls_token_id] + encoded_question + \
+                           [self.tokenizer.sep_token_id] + chunk_ids + \
+                           [self.tokenizer.sep_token_id]
 
-            end = min(end, len(input_tokens) - 1)
-
-            assert -1 <= start <= self.max_seq_len, f'Incorrect start index: {start}.'
-            assert -1 <= end <= self.max_seq_len, f'Incorrect start index: {end}.'
-
-            input_ids = self.tokenizer.convert_tokens_to_ids(input_tokens)
+            assert len(input_ids) <= self.max_seq_len
+            assert -1 <= start < self.max_seq_len, f'Incorrect start index: {start}.'
+            assert -1 <= end < self.max_seq_len, f'Incorrect start index: {end}.'
 
             chunks.append(ChunkItem(input_ids=input_ids,
                                     start_id=start,
@@ -115,14 +115,15 @@ class ChunkDataset:
                                     item_id=example_id,
                                     true_text=line['document_text'],
                                     true_question=line['question_text'],
-                                    question_len=len(tokenized_question),
+                                    question_len=len(encoded_question),
                                     t2o=t2o,
                                     chunk_start=doc_start,
                                     chunk_end=doc_end,
                                     true_label=self.labels2id[class_label],
                                     true_start=start_position,
-                                    true_end=end_position
-            ))
+                                    true_end=end_position,
+                                    start_position=start / self.max_seq_len,
+                                    end_position=end / self.max_seq_len))
 
         return chunks
 

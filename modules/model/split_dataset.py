@@ -485,7 +485,7 @@ class SplitDataset:
         return chunk
 
 
-def collate_fun(items, tokenizer):
+def collate_fun(items, tokenizer, return_items=False):
     batch_size = len(items)
     pad_token_id = tokenizer.pad_token_id
 
@@ -523,5 +523,8 @@ def collate_fun(items, tokenizer):
               'start_reg': torch.FloatTensor(start_pos),
               'end_reg': torch.FloatTensor(end_pos),
               'cls': torch.LongTensor(label_ids)}
+
+    if return_items:
+        return [inputs, labels, items]
 
     return [inputs, labels]
