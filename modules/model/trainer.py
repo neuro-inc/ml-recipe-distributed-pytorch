@@ -349,11 +349,9 @@ class Trainer:
         tqdm_data = tqdm(self.train_dataloader, desc=f'Train (epoch #{epoch_i} / {self.n_epochs})')
 
         for i, (inputs, labels) in enumerate(tqdm_data):
-            (input_ids, attention_mask, token_type_ids), labels = self._to_device((inputs, labels))
+            inputs, labels = self._to_device((inputs, labels))
 
-            pred_logits = self.model(input_ids=input_ids,
-                                     attention_mask=attention_mask,
-                                     token_type_ids=token_type_ids)
+            pred_logits = self.model(**inputs)
 
             self._backward(self.loss(pred_logits, labels, avg_meters=avg_meters))
 
@@ -403,11 +401,9 @@ class Trainer:
         tqdm_data = tqdm(self.test_dataloader, desc=f'Test (epoch #{epoch_i} / {self.n_epochs})')
 
         for i, (inputs, labels) in enumerate(tqdm_data):
-            (input_ids, attention_mask, token_type_ids), labels = self._to_device((inputs, labels))
+            inputs, labels = self._to_device((inputs, labels))
 
-            pred_logits = self.model(input_ids=input_ids,
-                                     attention_mask=attention_mask,
-                                     token_type_ids=token_type_ids)
+            pred_logits = self.model(**inputs)
 
             self.loss(pred_logits, labels, avg_meters=avg_meters)
 

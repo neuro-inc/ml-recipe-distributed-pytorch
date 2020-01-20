@@ -505,9 +505,9 @@ def collate_fun(items, tokenizer, return_items=False):
             token_type_ids[i, :len(row)] = token_type_id
 
     attention_mask = tokens > 0
-    inputs = [torch.from_numpy(tokens),
-              torch.from_numpy(attention_mask),
-              torch.from_numpy(token_type_ids)]
+    inputs = {'input_ids': torch.from_numpy(tokens),
+              'attention_mask': torch.from_numpy(attention_mask),
+              'token_type_ids': torch.from_numpy(token_type_ids)}
 
     # output labels
     start_ids = np.array([item.start_id for item in items])

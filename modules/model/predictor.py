@@ -100,11 +100,9 @@ class Predictor:
 
         tqdm_data = tqdm(async_dataset, desc='Processing documents. It can take a while', total=self.limit)
         for batch_i, (inputs, labels, items) in enumerate(tqdm_data):
-            (input_ids, attention_mask, token_type_ids) = self._to_device(inputs)
+            inputs = self._to_device(inputs)
 
-            preds = self.model(input_ids=input_ids,
-                               attention_mask=attention_mask,
-                               token_type_ids=token_type_ids)
+            preds = self.model(**inputs)
 
             start_preds, end_preds, cls_preds = [preds[k].detach().cpu() for k in keys_]
             # start_true, end_true, cls_true = labels
