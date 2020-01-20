@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
-from .split_dataset import RawPreprocessor
+from .. dataset import RawPreprocessor
 
 
 @dataclass
@@ -111,7 +111,7 @@ class ChunkDataset:
             chunks.append(ChunkItem(input_ids=input_ids,
                                     start_id=start,
                                     end_id=end,
-                                    label_id=self.labels2id[class_label],#self.labels2id[label],
+                                    label_id=self.labels2id[label], #self.labels2id[class_label],
                                     item_id=example_id,
                                     true_text=line['document_text'],
                                     true_question=line['question_text'],

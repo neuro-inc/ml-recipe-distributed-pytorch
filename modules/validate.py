@@ -1,15 +1,13 @@
-import functools
 import multiprocessing as mp
 
-import numpy as np
 import torch
-# from model.model import get_model
-from model.parser import get_model_parser, get_predictor_parser, get_params
-from model.predictor import Predictor
-from model.split_dataset import RawPreprocessor
-from model.validation_dataset import ChunkDataset
-from utils import *
+
+from utils import get_logger, set_seed, show_params
 from init import init_collate_fun, init_model
+
+from model.utils.parser import get_model_parser, get_predictor_parser, get_params
+from model.inference.predictor import Predictor
+from model.dataset import RawPreprocessor, ChunkDataset
 
 from transformers import BertTokenizer
 

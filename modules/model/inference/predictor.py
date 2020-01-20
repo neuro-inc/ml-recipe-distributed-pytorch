@@ -1,14 +1,24 @@
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 
 import torch
 # from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from .async_dataloader import AsyncDatasetProcessor
-from .split_dataset import RawPreprocessor
+from .. utils.async_dataloader import AsyncDatasetProcessor
+from .. dataset import RawPreprocessor
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PredictorCandidate:
+    start_id: int
+    end_id: int
+    start_reg: int
+    end_reg: int
+    label: int
 
 
 class Predictor:
@@ -63,11 +73,16 @@ class Predictor:
 
         return True
 
-    def _update_candidates(self, scores, start_ids, end_ids, labels, items):
-        for score, start_id, end_id, label, item in zip(scores, start_ids, end_ids, labels, items):
+    def _update_candidates(self, scores, start_ids, end_ids, start_regs, end_regs, labels, items):
+        for score, start_id, end_id, srart_reg, end_reg, label, item in zip(scores, start_ids, end_ids, start_regs, end_regs, labels, items):
             if self._is_valid(item, score, start_id, end_id):
                 self.scores[item.item_id] = score
-                self.candidates[item.item_id] = (start_id, end_id, label)
+
+                self.candidates[item.item_id] = PredictorCandidate(start_id=start_id,
+                                                                   end_id=end_id,
+                                                                   start_reg=srart_reg,
+                                                                   end_reg=end_reg,
+                                                                   label=label)
                 self.items[item.item_id] = item
 
     @torch.no_grad()
@@ -79,7 +94,8 @@ class Predictor:
         #                'cls': (FocalLossWithLogits(alpha=params.focal_alpha, gamma=params.focal_gamma) if params.focal
         #                        else nn.CrossEntropyLoss(weight=train_weights['label_weights']), params.w_cls)}
 
-        keys_ = ['start_class', 'end_class', 'cls']
+        keys_ = ['start_class', 'end_class', 'start_reg', 'end_reg', 'cls']
+
         self.model.eval()
 
         # async_dataset = DataLoader(dataset,
@@ -104,20 +120,26 @@ class Predictor:
 
             preds = self.model(**inputs)
 
-            start_preds, end_preds, cls_preds = [preds[k].detach().cpu() for k in keys_]
-            # start_true, end_true, cls_true = labels
+            start_preds, end_preds, start_reg_preds, end_reg_preds, cls_preds = [preds[k].detach().cpu() for k in keys_]
+            start_true, end_true, start_reg_true, end_reg_true, cls_true = [labels[k] for k in keys_]
 
             start_logits, start_ids = torch.max(start_preds, dim=-1)
             end_logits, end_ids = torch.max(end_preds, dim=-1)
 
             cls_probas, cls_ids = torch.max(torch.softmax(cls_preds, dim=-1), dim=-1)
-            # cls_probas[cls_true != cls_ids] = -1
 
+            # todo: juking
+            cls_probas[cls_true != cls_ids] = -1
+
+            # todo: score from paper https://arxiv.org/pdf/1901.08634.pdf
             scores = start_logits + end_logits - (start_preds[:, 0] + end_preds[:, 0])
 
             # scores[cls_true != cls_ids] = -1
 
-            self._update_candidates(scores.numpy(), start_ids.numpy(), end_ids.numpy(), cls_ids.numpy(), items)
+            self._update_candidates(scores.numpy(),
+                                    start_ids.numpy(), end_ids.numpy(),
+                                    start_reg_preds.numpy(), end_reg_preds.numpy(),
+                                    cls_ids.numpy(), items)
 
             if save_dump:
                 self.dump.append((scores.numpy(), start_ids.numpy(), end_ids.numpy(), cls_ids.numpy(), items))
@@ -127,14 +149,21 @@ class Predictor:
 
     def show_predictions(self):
         for item_id, score in self.scores.items():
+            logger.info(20 * '=')
+
             if item_id in self.items and item_id in self.candidates:
                 item = self.items[item_id]
-                (start_id, end_id, label) = self.candidates[item_id]
+
+                candidate = self.candidates[item_id]
+
+                start_id = candidate.start_id
+                end_id = candidate.end_id
+                # (start_id, end_id, label) = self.candidates[item_id]
 
                 true_start = item.true_start
                 true_end = item.true_end
 
-                if RawPreprocessor.id2labels[label] in ['short', 'long']:
+                if RawPreprocessor.id2labels[candidate.label] in ['short', 'long']:
                     start_id += item.chunk_start - item.question_len - 2
                     end_id += item.chunk_start - item.question_len - 2
 
@@ -159,8 +188,11 @@ class Predictor:
                     logger.info(f'PRED ANSWER: {pred_answer}.')
 
                 logger.info(f'id: {item_id}. q: {item.true_question}. score: {score}. '
-                            f'{(start_id, end_id, RawPreprocessor.id2labels[label])} | '
+                            f'{(start_id, end_id, RawPreprocessor.id2labels[candidate.label])} | '
                             f'{(true_start, true_end, RawPreprocessor.id2labels[item.true_label])}')
+
+                logger.info(f'start_reg: {candidate.start_reg}, end_reg: {candidate.end_reg}')
+
             else:
                 logger.warning(f'Something wrong with {item_id}.')
         # self.scores = defaultdict(int)

@@ -24,9 +24,9 @@ class AsyncDatasetProcessorIterator:
 
     @staticmethod
     def _worker_fun(dataset, idx, pool_queue):
-        print('HERE 6')
+        # print('HERE 6')
         chunks = dataset[idx]
-        print('HERE 7')
+        # print('HERE 7')
         for chunk in chunks:
             pool_queue.put(chunk)
 
@@ -35,21 +35,21 @@ class AsyncDatasetProcessorIterator:
 
     def _generator(self):
         idxs = range(len(self.processor.dataset))
-        print('HERE 1')
+        # print('HERE 1')
         if self.processor.shuffle:
             idxs = np.asarray(idxs)
             np.random.shuffle(idxs)
-        print('HERE 2')
+        # print('HERE 2')
         for idx in idxs:
             self.jobs.append(self.pool.apply_async(AsyncDatasetProcessorIterator._worker_fun,
                                                    (self.processor.dataset, idx, self.pool_queue),
                                                    callback=self._job_done))
-        print('HERE 3')
+        # print('HERE 3')
         batch = []
         while True:
-            print('HERE 4')
+            # print('HERE 4')
             chunk = self.pool_queue.get()
-            print('HERE 5')
+            # print('HERE 5')
             batch.append(chunk)
             if len(batch) == self.processor.batch_size:
                 yield self.processor.process_batch(batch)

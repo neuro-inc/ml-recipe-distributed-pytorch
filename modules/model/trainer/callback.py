@@ -5,7 +5,6 @@ import torch
 from sklearn import metrics
 
 from .meters import MAPMeter, AverageMeter
-from .split_dataset import RawPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -57,16 +56,16 @@ class AccuracyCallback(TestCallback):
 class MAPCallback(TestCallback):
     key = 'cls'
 
-    def __init__(self):
+    def __init__(self, metric_keys):
         super().__init__()
-
+        self._metric_keys = metric_keys
         self._reset()
 
     def _at_iteration_end(self, preds, labels, *args):
         cls_logits = preds[self.key].detach().cpu()
         cls_true = labels[self.key].detach().cpu()
 
-        self.map_meter.update(keys=list(RawPreprocessor.labels2id.keys()),
+        self.map_meter.update(keys=self._metric_keys,
                               pred_probas=torch.softmax(cls_logits, dim=-1).numpy(),
                               true_labels=cls_true.numpy())
 

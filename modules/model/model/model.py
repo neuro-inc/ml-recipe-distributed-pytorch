@@ -3,8 +3,6 @@ import logging
 import torch.nn as nn
 from transformers import BertModel, RobertaModel
 
-from .split_dataset import RawPreprocessor
-
 logger = logging.getLogger(__name__)
 
 
@@ -14,7 +12,7 @@ MODELS = {'bert': BertModel,
 
 class BertForQuestionAnswering(nn.Module):
     """BERT model for QA and classification tasks."""
-    def __init__(self, model_params):
+    def __init__(self, model_params, num_labels):
         super().__init__()
 
         self.model_params = model_params
@@ -24,7 +22,7 @@ class BertForQuestionAnswering(nn.Module):
                             hidden_dropout_prob=model_params.hidden_dropout_prob,
                             attention_probs_dropout_prob=model_params.attention_probs_dropout_prob,
                             layer_norm_eps=model_params.layer_norm_eps,
-                            num_labels=len(RawPreprocessor.labels2id))
+                            num_labels=num_labels)
 
         config = self.transformer.config
 

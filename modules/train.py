@@ -7,11 +7,12 @@ import torch
 import torch.multiprocessing as mp
 
 from init import init_loss, init_model, init_datasets, init_collate_fun
-from utils import *
+from utils import get_logger, set_seed, show_params
 
-from model.callback import MAPCallback, AccuracyCallback, SaveBestCallback
-from model.parser import get_trainer_parser, get_model_parser, write_config_file, get_params
-from model.trainer import Trainer
+from model.utils.parser import get_trainer_parser, get_model_parser, write_config_file, get_params
+from model.dataset import RawPreprocessor
+from model.trainer.callback import MAPCallback, AccuracyCallback, SaveBestCallback
+from model.trainer.trainer import Trainer
 
 
 def run_worker(device, params, model_params):
@@ -102,7 +103,9 @@ def run_worker(device, params, model_params):
     def save_each(epoch_i):
         trainer.save_state_dict(params.dump_dir / params.experiment_name / f'epoch_{epoch_i}.ch')
 
-    test_fun = functools.partial(trainer.test, callbacks=[MAPCallback(), AccuracyCallback(), SaveBestCallback(params)])
+    test_fun = functools.partial(trainer.test, callbacks=[MAPCallback(list(RawPreprocessor.labels2id.keys())),
+                                                          AccuracyCallback(),
+                                                          SaveBestCallback(params)])
 
     try:
         trainer.train(after_epoch_funcs=[save_last, save_each, test_fun])

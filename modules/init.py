@@ -6,10 +6,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from model.loss import FocalLossWithLogits, WeightedLoss
-from model.model import BertForQuestionAnswering
-from model.split_dataset import collate_fun, RawPreprocessor, SplitDataset
-from model.tokenizer import Tokenizer
+from model.model import BertForQuestionAnswering, Tokenizer, FocalLossWithLogits, WeightedLoss
+from model.dataset import collate_fun, RawPreprocessor, SplitDataset
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +44,7 @@ def init_model(model_params, *, checkpoint=None, device=torch.device('cpu'), bpe
                           handle_chinese_chars=model_params.handle_chinese_chars,
                           dropout=bpe_dropout)
 
-    model = BertForQuestionAnswering(model_params)
+    model = BertForQuestionAnswering(model_params, num_labels=len(RawPreprocessor.labels2id))
 
     model.to(device)
 
