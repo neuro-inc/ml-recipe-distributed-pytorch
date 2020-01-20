@@ -1,6 +1,8 @@
 import logging
 import os
 import shutil
+from dataclasses import dataclass
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -77,135 +79,145 @@ def get_optimized_parameters(model, weight_decay, *,
     return modules, optimizer_grouped_parameters
 
 
+@dataclass
 class Trainer:
-    def __init__(self, model, loss, collate_fun, train_dataset, test_dataset, writer_dir, *,
-                 device=torch.device('cuda'),
-                 train_batch_size=32,
-                 test_batch_size=32,
-                 batch_split=1,
-                 n_jobs=4,
-                 n_epochs=0,
-                 lr=1e-3,
-                 weight_decay=5e-4,
-                 warmup_coef=0.01,
-                 apex_level=None,
-                 apex_verbosity=1,
-                 apex_loss_scale=None,
-                 drop_optimizer=False,
-                 train_weights=None,
-                 debug=False,
-                 max_grad_norm=1,
-                 local_rank=-1,
-                 gpu_id=None,
-                 sync_bn=False,
-                 finetune=False,
-                 finetune_transformer=False,
-                 finetune_position=False,
-                 finetune_class=False,
-                 optimizer='adam'
-                 ):
+    model: nn.Module
+    loss: Any
+    collate_fun: Any
 
-        if sync_bn and local_rank != -1:
+    train_dataset: Any = None
+    test_dataset: Any = None
+
+    writer_dir: Any = None
+
+    device: Any = torch.device('cuda')
+
+    local_rank: int = -1
+    gpu_id: Optional[int] = None
+    sync_bn: bool = False
+
+    n_epochs: int = 0
+
+    train_batch_size: int = 32
+    test_batch_size: int = 32
+
+    batch_split: int = 1
+    n_jobs: int = 4
+
+    optimizer: str = 'adam'
+
+    lr: float = 1e-3
+    weight_decay: float = 5e-4
+    warmup_coef: float = 0.01
+    max_grad_norm: float = 1
+
+    apex_level: str = None
+    apex_verbosity: int = 1
+    apex_loss_scale: float = None
+
+    train_weights: defaultdict = None
+
+    finetune: bool = False
+    finetune_transformer: bool = False
+    finetune_position: bool = False
+    finetune_class: bool = False
+
+    drop_optimizer: bool = False
+    debug: bool = False
+
+    def __post_init__(self):
+
+        if self.sync_bn and self.local_rank != -1:
             try:
                 import apex
-                model = apex.parallel.convert_syncbn_model(model)
+                self.model = apex.parallel.convert_syncbn_model(self.model)
                 logger.info('BatchNorm was synchronized across nodes with APEX module.')
             except ImportError:
-                model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+                self.model = nn.SyncBatchNorm.convert_sync_batchnorm(self.model)
                 logger.info('BatchNorm was synchronized across nodes with Pytorch module.')
 
-        self.device = device
-        self.model = model.to(self.device)
-        self.loss = loss.to(self.device)
+        self.model = self.model.to(self.device)
+        self.loss = self.loss.to(self.device)
 
-        if finetune and apex_level is not None:
+        if self.finetune and self.apex_level is not None:
             logger.warning(f'Finetune mode is not supported with Apex.')
-            apex_level = None
+            self.apex_level = None
 
-        self.modules, optimizer_grouped_parameters = get_optimized_parameters(self.model, weight_decay,
-                                                                              finetune=finetune,
-                                                                              finetune_transformer=finetune_transformer,
-                                                                              finetune_position=finetune_position,
-                                                                              finetune_class=finetune_class)
+        self.modules, optimizer_grouped_parameters = get_optimized_parameters(
+            self.model, self.weight_decay,
+            finetune=self.finetune,
+            finetune_transformer=self.finetune_transformer,
+            finetune_position=self.finetune_position,
+            finetune_class=self.finetune_class)
 
+        # todo: does not work with none dataset
         # todo: incorrect value during distributed training
-        num_training_steps = n_epochs * len(train_dataset) // train_batch_size
-        num_warmup_steps = int(num_training_steps * warmup_coef)
+        num_training_steps = self.n_epochs * len(self.train_dataset) // self.train_batch_size
+        num_warmup_steps = int(num_training_steps * self.warmup_coef)
 
-        logger.info(f'Train Dataset len: {len(train_dataset)}. #JOBS: {n_jobs}.')
-        logger.info(f'Test Dataset len: {len(test_dataset)}. #JOBS: {n_jobs}.')
+        logger.info(f'Train Dataset len: {len(self.train_dataset)}. #JOBS: {self.n_jobs}.')
+        logger.info(f'Test Dataset len: {len(self.test_dataset)}. #JOBS: {self.n_jobs}.')
         logger.info(f'Training steps number: {num_training_steps}. Warmup steps number: {num_warmup_steps}.')
 
-        self.optimizer = AdamW(optimizer_grouped_parameters, lr=lr, correct_bias=False) if optimizer == 'adam' \
-            else AdaMod(optimizer_grouped_parameters, lr=lr)
+        self.optimizer = AdamW(optimizer_grouped_parameters, lr=self.lr, correct_bias=False) if self.optimizer == 'adam' \
+            else AdaMod(optimizer_grouped_parameters, lr=self.lr)
         self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=num_warmup_steps,
                                                          num_training_steps=num_training_steps) \
             if num_warmup_steps else None
 
         self.model, self.optimizer = initialize_apex(self.model, optimizer=self.optimizer,
-                                                     apex_level=apex_level,
-                                                     apex_verbosity=apex_verbosity,
-                                                     apex_loss_scale=apex_loss_scale)
+                                                     apex_level=self.apex_level,
+                                                     apex_verbosity=self.apex_verbosity,
+                                                     apex_loss_scale=self.apex_loss_scale)
 
-        if local_rank != -1:
-            if gpu_id is not None:
+        if self.local_rank != -1:
+            if self.gpu_id is not None:
                 self.model = torch.nn.parallel.DistributedDataParallel(
-                    self.model, device_ids=[gpu_id], output_device=gpu_id, find_unused_parameters=True
+                    self.model, device_ids=[self.gpu_id], output_device=self.gpu_id, find_unused_parameters=True
                 )
             else:
                 self.model = torch.nn.parallel.DistributedDataParallel(self.model, find_unused_parameters=True)
 
-        self.apex_level = apex_level
-        self.apex_verbosity = apex_verbosity
         logger.info(f'APEX optimization level: {self.apex_level}. APEX verbosity: {self.apex_verbosity}.')
 
-        if local_rank == -1:
-            if train_weights is None or train_weights['sampler_weights'] is None:
-                train_sampler = RandomSampler(train_dataset)
+        if self.local_rank == -1:
+            if self.train_weights is None or self.train_weights['sampler_weights'] is None:
+                train_sampler = RandomSampler(self.train_dataset)
             else:
-                assert len(train_weights['sampler_weights']) == len(train_dataset)
-                train_sampler = WeightedRandomSampler(train_weights['sampler_weights'],
-                                                      len(train_dataset))
+                assert len(self.train_weights['sampler_weights']) == len(self.train_dataset)
+                train_sampler = WeightedRandomSampler(self.train_weights['sampler_weights'],
+                                                      len(self.train_dataset))
         else:
-            train_sampler = DistributedSampler(train_dataset)
+            train_sampler = DistributedSampler(self.train_dataset)
 
         logger.info(f'Used train sampler: {type(train_sampler).__name__}.')
 
-        self.train_dataloader = torch.utils.data.DataLoader(train_dataset,
-                                                            batch_size=int(train_batch_size // batch_split),
-                                                            num_workers=n_jobs,
+        self.train_dataloader = torch.utils.data.DataLoader(self.train_dataset,
+                                                            batch_size=int(self.train_batch_size // self.batch_split),
+                                                            num_workers=self.n_jobs,
                                                             sampler=train_sampler,
                                                             drop_last=True,
-                                                            collate_fn=collate_fun) \
-            if train_dataset is not None else None
+                                                            collate_fn=self.collate_fun) \
+            if self.train_dataset is not None else None
 
-        self.test_dataloader = torch.utils.data.DataLoader(test_dataset,
-                                                           batch_size=test_batch_size,
-                                                           num_workers=n_jobs,
+        self.test_dataloader = torch.utils.data.DataLoader(self.test_dataset,
+                                                           batch_size=self.test_batch_size,
+                                                           num_workers=self.n_jobs,
                                                            shuffle=False,
                                                            drop_last=False,
-                                                           collate_fn=collate_fun) \
-            if test_dataset is not None else None
-
-        self.max_grad_norm = max_grad_norm
-
-        self.local_rank = local_rank
-        self.batch_split = batch_split
-        self.n_epochs = n_epochs
+                                                           collate_fn=self.collate_fun) \
+            if self.test_dataset is not None else None
 
         self.global_step = 0
-        self.drop_optimizer = drop_optimizer
+        self.writer = Trainer._init_writer(self.local_rank, self.writer_dir)
 
-        self.debug = debug
         if self.debug:
             self.n_epochs = 2
-
-        self.writer = Trainer._init_writer(local_rank, writer_dir)
 
     @staticmethod
     def _init_writer(local_rank, writer_dir):
         writer = None
-        if local_rank in [-1, 0]:
+        if writer_dir is not None and local_rank in [-1, 0]:
             logger.warning(f'Directory {writer_dir} will be cleaned before SummaryWriter initialization. '
                            f'To prevent missing important information, use different experiment names.')
             shutil.rmtree(writer_dir, ignore_errors=True)

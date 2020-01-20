@@ -46,32 +46,49 @@ def run_worker(device, params, model_params):
     train_dataset, test_dataset, train_weights = init_datasets(params, tokenizer=tokenizer, clear=False)
     loss = init_loss(params, train_weights)
 
-    trainer = Trainer(model, loss, init_collate_fun(tokenizer), train_dataset, test_dataset,
+    trainer = Trainer(model=model,
+                      loss=loss,
+                      collate_fun=init_collate_fun(tokenizer),
+
+                      train_dataset=train_dataset,
+                      test_dataset=test_dataset,
+
                       writer_dir=params.dump_dir / f'board/{params.experiment_name}',
+
                       device=device,
+
+                      local_rank=params.local_rank,
+                      gpu_id=gpu_id,
+                      sync_bn=params.sync_bn,
+
+                      n_epochs=params.n_epochs,
+
                       train_batch_size=params.train_batch_size,
                       test_batch_size=params.test_batch_size,
+
                       batch_split=params.batch_split,
                       n_jobs=params.n_jobs,
-                      n_epochs=params.n_epochs,
+
+                      optimizer=params.optimizer,
+
                       lr=params.lr,
                       weight_decay=params.weight_decay,
                       warmup_coef=params.warmup_coef,
+                      max_grad_norm=params.max_grad_norm,
+
                       apex_level=params.apex_level,
                       apex_verbosity=params.apex_verbosity,
                       apex_loss_scale=params.apex_loss_scale,
+
                       train_weights=train_weights,
-                      drop_optimizer=params.drop_optimizer,
-                      max_grad_norm=params.max_grad_norm,
-                      sync_bn=params.sync_bn,
-                      debug=params.debug,
-                      local_rank=params.local_rank,
-                      gpu_id=gpu_id,
+
                       finetune=params.finetune,
                       finetune_transformer=params.finetune_transformer,
                       finetune_position=params.finetune_position,
                       finetune_class=params.finetune_class,
-                      optimizer=params.optimizer
+
+                      drop_optimizer=params.drop_optimizer,
+                      debug=params.debug
                       )
 
     if params.last is not None:
