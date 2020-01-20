@@ -40,10 +40,10 @@ def get_optimized_parameters(model, weight_decay, *,
                              finetune=False,
                              finetune_transformer=False,
                              finetune_position=False,
+                             finetune_position_reg=False,
                              finetune_class=False):
     if finetune:
-        raise NotImplemented
-
+        # to froze batchnorms and dropouts
         model.eval()
 
         optimizer_parameters = []
@@ -55,6 +55,12 @@ def get_optimized_parameters(model, weight_decay, *,
 
         if finetune_position:
             modules.append(model.position_outputs)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+
+        if finetune_position_reg:
+            modules.append(model.reg_start)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+            modules.append(model.reg_end)
             optimizer_parameters.extend(list(modules[-1].named_parameters()))
 
         if finetune_class:
@@ -121,6 +127,7 @@ class Trainer:
     finetune: bool = False
     finetune_transformer: bool = False
     finetune_position: bool = False
+    finetune_position_reg: bool = False
     finetune_class: bool = False
 
     drop_optimizer: bool = False
@@ -144,11 +151,13 @@ class Trainer:
             logger.warning(f'Finetune mode is not supported with Apex.')
             self.apex_level = None
 
+        # todo: not universal approach
         self.modules, optimizer_grouped_parameters = get_optimized_parameters(
             self.model, self.weight_decay,
             finetune=self.finetune,
             finetune_transformer=self.finetune_transformer,
             finetune_position=self.finetune_position,
+            finetune_position_reg=self.finetune_position_reg,
             finetune_class=self.finetune_class)
 
         self.optimizer = AdamW(optimizer_grouped_parameters, lr=self.lr, correct_bias=False) if self.optimizer == 'adam' \
@@ -182,7 +191,7 @@ class Trainer:
                 )
             else:
                 self.model = torch.nn.parallel.DistributedDataParallel(self.model, find_unused_parameters=True)
-        # todo: add dataparallel
+        # todo: add nn.dataparallel?
 
         self.train_dataloader = Trainer._init_dataloader(self.train_dataset,
                                                          'Train',

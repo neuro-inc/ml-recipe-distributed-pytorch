@@ -13,21 +13,7 @@ MODELS = {'bert': BertModel,
 
 
 class BertForQuestionAnswering(nn.Module):
-    """BERT model for QA and classification tasks.
-
-    Parameters
-    ----------
-    config : transformers.BertConfig. Configuration class for BERT.
-
-    Returns
-    -------
-    start_logits : torch.Tensor with shape (batch_size, sequence_size).
-        Starting scores of each tokens.
-    end_logits : torch.Tensor with shape (batch_size, sequence_size).
-        Ending scores of each tokens.
-    classifier_logits : torch.Tensor with shape (batch_size, num_classes).
-        Classification scores of each labels.
-    """
+    """BERT model for QA and classification tasks."""
     def __init__(self, model_params):
         super().__init__()
 

@@ -145,6 +145,7 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--finetune', action='store_true', help='')
     parser.add_argument('--finetune_transformer', action='store_true', help='')
     parser.add_argument('--finetune_position', action='store_true', help='')
+    parser.add_argument('--finetune_position_reg', action='stare_true', help='')
     parser.add_argument('--finetune_class', action='store_true', help='')
 
     parser.add_argument('--max_seq_len', type=int, default=384, help='')

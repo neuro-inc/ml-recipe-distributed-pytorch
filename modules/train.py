@@ -85,6 +85,7 @@ def run_worker(device, params, model_params):
                       finetune=params.finetune,
                       finetune_transformer=params.finetune_transformer,
                       finetune_position=params.finetune_position,
+                      finetune_position_reg=params.finetune_position_reg,
                       finetune_class=params.finetune_class,
 
                       drop_optimizer=params.drop_optimizer,
@@ -119,7 +120,7 @@ def main(params, model_params) -> None:
 
     set_seed(params.seed)
 
-    # todo: wrong rank if nodes have different gpu number or when node does not gpu
+    # todo: wrong rank if nodes have different gpu number or when node does not have a gpu
     params.dist_ngpus_per_node = torch.cuda.device_count()
     params.dist_world_size *= params.dist_ngpus_per_node
     params.distributed = params.dist_world_size > 1
