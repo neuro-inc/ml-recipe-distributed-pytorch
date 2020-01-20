@@ -12,7 +12,6 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 
 from .meters import *
 from .optim import AdaMod
-from .split_dataset import RawPreprocessor
 
 logger = logging.getLogger(__file__)
 
@@ -40,6 +39,8 @@ def get_optimized_parameters(model, weight_decay, *,
                              finetune_position=False,
                              finetune_class=False):
     if finetune:
+        raise NotImplemented
+
         model.eval()
 
         optimizer_parameters = []
@@ -77,7 +78,7 @@ def get_optimized_parameters(model, weight_decay, *,
 
 
 class Trainer:
-    def __init__(self, model, loss, tokenizer, train_dataset, test_dataset, writer_dir,*,
+    def __init__(self, model, loss, collate_fun, train_dataset, test_dataset, writer_dir, *,
                  device=torch.device('cuda'),
                  train_batch_size=32,
                  test_batch_size=32,
@@ -175,7 +176,7 @@ class Trainer:
                                                             num_workers=n_jobs,
                                                             sampler=train_sampler,
                                                             drop_last=True,
-                                                            collate_fn=self.collate_fun) \
+                                                            collate_fn=collate_fun) \
             if train_dataset is not None else None
 
         self.test_dataloader = torch.utils.data.DataLoader(test_dataset,
@@ -183,7 +184,7 @@ class Trainer:
                                                            num_workers=n_jobs,
                                                            shuffle=False,
                                                            drop_last=False,
-                                                           collate_fn=self.collate_fun) \
+                                                           collate_fn=collate_fun) \
             if test_dataset is not None else None
 
         self.max_grad_norm = max_grad_norm
@@ -191,19 +192,15 @@ class Trainer:
         self.local_rank = local_rank
         self.batch_split = batch_split
         self.n_epochs = n_epochs
-        self.tokenizer = tokenizer
+
         self.global_step = 0
         self.drop_optimizer = drop_optimizer
 
         self.debug = debug
         if self.debug:
-            self.n_epochs = 1
+            self.n_epochs = 2
 
         self.writer = Trainer._init_writer(local_rank, writer_dir)
-
-        self.metrics = None
-
-        self.average_loss = True
 
     @staticmethod
     def _init_writer(local_rank, writer_dir):
@@ -216,49 +213,8 @@ class Trainer:
 
         return writer
 
-    def get_lr(self):
+    def _get_lr(self):
         return self.optimizer.param_groups[0]['lr']
-
-    def collate_fun(self, items):
-        batch_size = len(items)
-        pad_token_id = self.tokenizer.pad_token_id
-
-        max_len = max([len(item.input_ids) for item in items])
-        tokens = pad_token_id * np.ones((batch_size, max_len), dtype=np.int64)
-        # todo: wtf
-        token_type_ids = np.zeros((batch_size, max_len), dtype=np.int64) if self.tokenizer.model_name == 'roberta' \
-            else np.ones((batch_size, max_len), dtype=np.int64)
-
-        for i, item in enumerate(items):
-            row = item.input_ids
-
-            tokens[i, :len(row)] = row
-            # todo: wtf
-            if self.tokenizer.model_name == 'bert':
-                token_type_id = [0 if i <= row.index(self.tokenizer.sep_token_id) else 1 for i in range(len(row))]
-                token_type_ids[i, :len(row)] = token_type_id
-
-        attention_mask = tokens > 0
-        inputs = [torch.from_numpy(tokens),
-                  torch.from_numpy(attention_mask),
-                  torch.from_numpy(token_type_ids)]
-
-        # output labels
-        start_ids = np.array([item.start_id for item in items])
-        end_ids = np.array([item.end_id for item in items])
-
-        start_pos = np.array([item.start_position for item in items])
-        end_pos = np.array([item.end_position for item in items])
-
-        label_ids = [item.label_id for item in items]
-
-        labels = {'start_class': torch.LongTensor(start_ids),
-                  'end_class': torch.LongTensor(end_ids),
-                  'start_reg': torch.FloatTensor(start_pos),
-                  'end_reg': torch.FloatTensor(end_pos),
-                  'cls': torch.LongTensor(label_ids)}
-
-        return [inputs, labels]
 
     def _backward(self, loss):
         loss = loss / self.batch_split
@@ -355,7 +311,7 @@ class Trainer:
 
             self._backward(self.loss(pred_logits, labels, avg_meters=avg_meters))
 
-            avg_meters['lr'] = self.get_lr()
+            avg_meters['lr'] = self._get_lr()
 
             if (i + 1) % self.batch_split == 0:
                 self._clip_grad_norm()

@@ -12,6 +12,7 @@ from typing import List
 
 import nltk
 import numpy as np
+import torch
 from sklearn.model_selection import train_test_split
 from tqdm.auto import tqdm
 
@@ -482,3 +483,45 @@ class SplitDataset:
             chunk = self._split_doc(line)
 
         return chunk
+
+
+def collate_fun(items, tokenizer):
+    batch_size = len(items)
+    pad_token_id = tokenizer.pad_token_id
+
+    max_len = max([len(item.input_ids) for item in items])
+    tokens = pad_token_id * np.ones((batch_size, max_len), dtype=np.int64)
+    # todo: wtf
+    token_type_ids = np.zeros((batch_size, max_len), dtype=np.int64) if tokenizer.model_name == 'roberta' \
+        else np.ones((batch_size, max_len), dtype=np.int64)
+
+    for i, item in enumerate(items):
+        row = item.input_ids
+
+        tokens[i, :len(row)] = row
+        # todo: wtf
+        if tokenizer.model_name == 'bert':
+            token_type_id = [0 if i <= row.index(tokenizer.sep_token_id) else 1 for i in range(len(row))]
+            token_type_ids[i, :len(row)] = token_type_id
+
+    attention_mask = tokens > 0
+    inputs = [torch.from_numpy(tokens),
+              torch.from_numpy(attention_mask),
+              torch.from_numpy(token_type_ids)]
+
+    # output labels
+    start_ids = np.array([item.start_id for item in items])
+    end_ids = np.array([item.end_id for item in items])
+
+    start_pos = np.array([item.start_position for item in items])
+    end_pos = np.array([item.end_position for item in items])
+
+    label_ids = [item.label_id for item in items]
+
+    labels = {'start_class': torch.LongTensor(start_ids),
+              'end_class': torch.LongTensor(end_ids),
+              'start_reg': torch.FloatTensor(start_pos),
+              'end_reg': torch.FloatTensor(end_pos),
+              'cls': torch.LongTensor(label_ids)}
+
+    return [inputs, labels]

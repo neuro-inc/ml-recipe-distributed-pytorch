@@ -1,18 +1,12 @@
 import functools
 import logging
 import os
-from collections import defaultdict
 from datetime import datetime
 
-import numpy as np
 import torch
 import torch.multiprocessing as mp
 
-from model.loss import init_loss
-from model.model import get_model
-from model.parser import get_trainer_parser, get_model_parser, write_config_file, get_params
-from model.split_dataset import RawPreprocessor, SplitDataset
-from model.trainer import Trainer
+from init import init_loss, init_model, init_datasets, init_collate_fun
 from utils import *
 
 from model.callback import MAPCallback, AccuracyCallback, SaveBestCallback
@@ -48,11 +42,11 @@ def run_worker(device, params, model_params):
 
     logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
 
-    model, tokenizer = get_model(model_params, bpe_dropout=params.bpe_dropout)
-    train_dataset, test_dataset, train_weights = get_datasets(params, tokenizer=tokenizer, clear=False)
+    model, tokenizer = init_model(model_params, bpe_dropout=params.bpe_dropout)
+    train_dataset, test_dataset, train_weights = init_datasets(params, tokenizer=tokenizer, clear=False)
     loss = init_loss(params, train_weights)
 
-    trainer = Trainer(model, loss, tokenizer, train_dataset, test_dataset,
+    trainer = Trainer(model, loss, init_collate_fun(tokenizer), train_dataset, test_dataset,
                       writer_dir=params.dump_dir / f'board/{params.experiment_name}',
                       device=device,
                       train_batch_size=params.train_batch_size,
@@ -119,7 +113,7 @@ def main(params, model_params) -> None:
 
     if params.distributed and params.local_rank in [0, -1]:
         logger.info('Preparing dataset in main process.')
-        _ = get_datasets(params, tokenizer=None, clear=params.clear_processed)
+        _ = init_datasets(params, tokenizer=None, clear=params.clear_processed)
 
     if params.distributed_mp:
         mp.spawn(run_worker, nprocs=params.dist_ngpus_per_node, args=(params, model_params))

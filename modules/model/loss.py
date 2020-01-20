@@ -2,17 +2,6 @@ import torch
 import torch.nn as nn
 
 
-def init_loss(params, train_weights):
-    init_losses = {'start_class': (nn.CrossEntropyLoss(ignore_index=-1), params.w_start),
-                   'end_class': (nn.CrossEntropyLoss(ignore_index=-1), params.w_end),
-                   'start_reg': (nn.MSELoss(), params.w_start_reg),
-                   'end_reg': (nn.MSELoss(), params.w_end_reg),
-                   'cls': (FocalLossWithLogits(alpha=params.focal_alpha, gamma=params.focal_gamma) if params.focal
-                           else nn.CrossEntropyLoss(weight=train_weights['label_weights']), params.w_cls)}
-
-    return WeightedLoss(init_losses)
-
-
 class BinaryFocalLossWithLogits(nn.Module):
     def __init__(self, alpha=1, gamma=2):
         super().__init__()

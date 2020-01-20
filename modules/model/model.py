@@ -1,48 +1,15 @@
 import logging
 
-import torch
 import torch.nn as nn
 from transformers import BertModel, RobertaModel
 
 from .split_dataset import RawPreprocessor
-from .tokenizer import Tokenizer
 
 logger = logging.getLogger(__name__)
 
 
 MODELS = {'bert': BertModel,
           'roberta': RobertaModel}
-
-
-def _load_checkpoint(model, checkpoint, *, device=torch.device('cpu')):
-    if checkpoint is not None:
-        state_dict = torch.load(checkpoint, map_location=device)
-        model.load_state_dict(state_dict['model'])
-
-        logger.info(f'Model checkpoint was restored from {checkpoint}.')
-
-
-def get_model(model_params, *, checkpoint=None, device=torch.device('cpu'), bpe_dropout=None):
-    model_params.model_name = model_params.model.split('-')[0]
-
-    # todo: https://github.com/huggingface/transformers/issues/2392
-    model_params.model = './data/roberta' if model_params.model_name == 'roberta' else model_params.model
-
-    tokenizer = Tokenizer(model_name=model_params.model_name,
-                          vocab_file=model_params.vocab_file,
-                          merges_file=model_params.merges_file,
-                          lowercase=model_params.lowercase,
-                          handle_chinese_chars=model_params.handle_chinese_chars,
-                          dropout=bpe_dropout)
-
-    model = BertForQuestionAnswering(model_params)
-
-    model.to(device)
-
-    if checkpoint is not None:
-        _load_checkpoint(model, checkpoint, device=device)
-
-    return model, tokenizer
 
 
 class BertForQuestionAnswering(nn.Module):
