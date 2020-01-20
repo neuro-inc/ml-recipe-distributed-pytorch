@@ -12,6 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import AdamW, get_linear_schedule_with_warmup
 
+from .callback import TestCallback
 from .meters import *
 from .optim import AdaMod
 
@@ -150,26 +151,30 @@ class Trainer:
             finetune_position=self.finetune_position,
             finetune_class=self.finetune_class)
 
-        # todo: does not work with none dataset
-        # todo: incorrect value during distributed training
-        num_training_steps = self.n_epochs * len(self.train_dataset) // self.train_batch_size
-        num_warmup_steps = int(num_training_steps * self.warmup_coef)
-
-        logger.info(f'Train Dataset len: {len(self.train_dataset)}. #JOBS: {self.n_jobs}.')
-        logger.info(f'Test Dataset len: {len(self.test_dataset)}. #JOBS: {self.n_jobs}.')
-        logger.info(f'Training steps number: {num_training_steps}. Warmup steps number: {num_warmup_steps}.')
-
         self.optimizer = AdamW(optimizer_grouped_parameters, lr=self.lr, correct_bias=False) if self.optimizer == 'adam' \
             else AdaMod(optimizer_grouped_parameters, lr=self.lr)
-        self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=num_warmup_steps,
-                                                         num_training_steps=num_training_steps) \
-            if num_warmup_steps else None
+        logger.info(f'Used optimizer: {type(self.optimizer).__name__}.')
 
+        self.scheduler = None
+        if self.train_dataset is not None and self.warmup_coef > 0:
+            # todo: incorrect value during distributed training?
+            num_training_steps = self.n_epochs * len(self.train_dataset) // self.train_batch_size
+            num_warmup_steps = int(num_training_steps * self.warmup_coef)
+
+            logger.info(f'Wurmup scheldure is used. #Training steps: {num_training_steps}. '
+                        f'#Warmup steps: {num_warmup_steps}.')
+
+            self.scheduler = get_linear_schedule_with_warmup(self.optimizer, num_warmup_steps=num_warmup_steps,
+                                                             num_training_steps=num_training_steps)
+
+        # init apex
         self.model, self.optimizer = initialize_apex(self.model, optimizer=self.optimizer,
                                                      apex_level=self.apex_level,
                                                      apex_verbosity=self.apex_verbosity,
                                                      apex_loss_scale=self.apex_loss_scale)
+        logger.info(f'APEX optimization level: {self.apex_level}. APEX verbosity: {self.apex_verbosity}.')
 
+        # init distributed training
         if self.local_rank != -1:
             if self.gpu_id is not None:
                 self.model = torch.nn.parallel.DistributedDataParallel(
@@ -177,8 +182,33 @@ class Trainer:
                 )
             else:
                 self.model = torch.nn.parallel.DistributedDataParallel(self.model, find_unused_parameters=True)
+        # todo: add dataparallel
 
-        logger.info(f'APEX optimization level: {self.apex_level}. APEX verbosity: {self.apex_verbosity}.')
+        self.train_dataloader = Trainer._init_dataloader(self.train_dataset,
+                                                         'Train',
+                                                         batch_size=int(self.train_batch_size // self.batch_split),
+                                                         n_jobs=self.n_jobs,
+                                                         sampler=self._init_train_sampler(),
+                                                         drop_last=True,
+                                                         collate_fun=self.collate_fun)
+
+        self.test_dataloader = Trainer._init_dataloader(self.test_dataset,
+                                                        'Test',
+                                                        batch_size=self.test_batch_size,
+                                                        n_jobs=self.n_jobs,
+                                                        sampler=None,
+                                                        drop_last=False,
+                                                        collate_fun=self.collate_fun)
+
+        self.global_step = 0
+        self.writer = Trainer._init_writer(self.local_rank, self.writer_dir)
+
+        if self.debug:
+            self.n_epochs = 2
+
+    def _init_train_sampler(self):
+        if self.train_dataset is None:
+            return None
 
         if self.local_rank == -1:
             if self.train_weights is None or self.train_weights['sampler_weights'] is None:
@@ -192,27 +222,19 @@ class Trainer:
 
         logger.info(f'Used train sampler: {type(train_sampler).__name__}.')
 
-        self.train_dataloader = torch.utils.data.DataLoader(self.train_dataset,
-                                                            batch_size=int(self.train_batch_size // self.batch_split),
-                                                            num_workers=self.n_jobs,
-                                                            sampler=train_sampler,
-                                                            drop_last=True,
-                                                            collate_fn=self.collate_fun) \
-            if self.train_dataset is not None else None
+        return train_sampler
 
-        self.test_dataloader = torch.utils.data.DataLoader(self.test_dataset,
-                                                           batch_size=self.test_batch_size,
-                                                           num_workers=self.n_jobs,
-                                                           shuffle=False,
-                                                           drop_last=False,
-                                                           collate_fn=self.collate_fun) \
-            if self.test_dataset is not None else None
+    @staticmethod
+    def _init_dataloader(dataset, name, *, batch_size=1, n_jobs=0, sampler=None, drop_last=False, collate_fun=None):
+        logger.info(f'{name} dataset len: {len(dataset)}. #JOBS: {n_jobs}.')
 
-        self.global_step = 0
-        self.writer = Trainer._init_writer(self.local_rank, self.writer_dir)
-
-        if self.debug:
-            self.n_epochs = 2
+        return None if dataset is None else torch.utils.data.DataLoader(dataset,
+                                                                        batch_size=batch_size,
+                                                                        num_workers=n_jobs,
+                                                                        sampler=sampler,
+                                                                        drop_last=drop_last,
+                                                                        shuffle=False,
+                                                                        collate_fn=collate_fun)
 
     @staticmethod
     def _init_writer(local_rank, writer_dir):
@@ -295,6 +317,10 @@ class Trainer:
             raise NotImplemented
 
     def train(self, after_epoch_funcs=None):
+        if self.train_dataloader is None:
+            logger.warning('You have not specified train dataset, so you cannot run train method.')
+            return
+
         after_epoch_funcs = [] if after_epoch_funcs is None else after_epoch_funcs
 
         def run_after_funcs():
@@ -302,8 +328,7 @@ class Trainer:
                 func(epoch_i)
 
         for epoch_i in range(1, self.n_epochs+1):
-            if self.train_dataloader is not None:
-                self._train(epoch_i)
+            self._train(epoch_i)
             run_after_funcs()
 
     def _train(self, epoch_i):
@@ -344,8 +369,14 @@ class Trainer:
             Trainer._update_console(tqdm_data, avg_meters)
 
     def test(self, epoch_i, *, callbacks=None):
+        if self.test_dataloader is None:
+            logger.warning('You have not specified test dataset, so you cannot run test method.')
+            return
+
         if callbacks is not None and not isinstance(callbacks, (list, tuple)):
             callbacks = tuple(callbacks)
+
+        assert all(isinstance(c, TestCallback) for c in callbacks)
 
         if self.test_dataloader is not None:
             with torch.no_grad():
