@@ -1,5 +1,5 @@
+import functools
 import logging
-import math
 import os
 from collections import defaultdict
 from datetime import datetime
@@ -15,44 +15,9 @@ from model.split_dataset import RawPreprocessor, SplitDataset
 from model.trainer import Trainer
 from utils import *
 
-
-def get_datasets(params, *, tokenizer=None, clear=False):
-    preprocessor = RawPreprocessor(raw_json=params.data_path,
-                                   out_dir=params.processed_data_path,
-                                   clear=clear)
-    labels_counter, labels, (train_indexes, train_labels, test_indexes, test_labels) = preprocessor()
-
-    weights = defaultdict(lambda: None)
-
-    if params.train_label_weights:
-        label_weights = np.asarray([1 / labels_counter[k] for k in sorted(labels_counter.keys())])
-        label_weights = label_weights / np.sum(label_weights)
-
-        logger.info(f'Label weights: {", ".join([f"{RawPreprocessor.id2labels[k]} ({k}) - {v:.4f}" for k, v in enumerate(label_weights)])}.')
-
-        weights['label_weights'] = torch.from_numpy(label_weights)
-
-    if params.train_sampler_weights:
-        sampler_weights = np.asarray([1 / (labels_counter[label]) for label in train_labels])
-        sampler_weights = sampler_weights / np.sum(sampler_weights)
-
-        weights['sampler_weights'] = sampler_weights
-
-    train_dataset = SplitDataset(params.processed_data_path, tokenizer, train_indexes,
-                                 max_seq_len=params.max_seq_len,
-                                 max_question_len=params.max_question_len,
-                                 doc_stride=params.doc_stride,
-                                 split_by_sentence=params.split_by_sentence,
-                                 truncate=params.truncate)
-    test_dataset = SplitDataset(params.processed_data_path, tokenizer, test_indexes, test=True,
-                                max_seq_len=params.max_seq_len,
-                                max_question_len=params.max_question_len,
-                                doc_stride=params.doc_stride,
-                                split_by_sentence=params.split_by_sentence,
-                                truncate=params.truncate) \
-        if params.local_rank in [-1, 0] else None
-
-    return train_dataset, test_dataset, weights
+from model.callback import MAPCallback, AccuracyCallback, SaveBestCallback
+from model.parser import get_trainer_parser, get_model_parser, write_config_file, get_params
+from model.trainer import Trainer
 
 
 def run_worker(device, params, model_params):
@@ -125,31 +90,10 @@ def run_worker(device, params, model_params):
     def save_each(epoch_i):
         trainer.save_state_dict(params.dump_dir / params.experiment_name / f'epoch_{epoch_i}.ch')
 
-    class save_best:
-        def __init__(self):
-            self.metric = params.best_metric
-            self.order = params.best_order
-            self.value = 1e10 * (-1 if params.best_order == '>' else 1)
-
-        def __call__(self, *args):
-            if trainer.metrics is not None:
-                assert self.metric in trainer.metrics
-
-                if self.metric in trainer.metrics and not math.isnan(trainer.metrics[self.metric]):
-
-                    if eval(f'{trainer.metrics[self.metric]}{self.order}{self.value}'):
-                        self.value = trainer.metrics[self.metric]
-                        trainer.save_state_dict(params.dump_dir / params.experiment_name / f'best.ch')
-                        logger.info(f'Best value of {self.metric} was achieved after training step {trainer.global_step} '
-                                    f'and equals to {self.value:.3f}')
-                    else:
-                        logger.info(f'Best value {self.value:.3f} of {self.metric} was not bitten '
-                                    f'with {trainer.metrics[self.metric]:.3f}')
-                else:
-                    logger.warning(f'Trainer metrics do not contain metric {self.metric}.')
+    test_fun = functools.partial(trainer.test, callbacks=[MAPCallback(), AccuracyCallback(), SaveBestCallback(params)])
 
     try:
-        trainer.train(after_epoch_funcs=[save_last, save_each, trainer.test, save_best()])
+        trainer.train(after_epoch_funcs=[save_last, save_each, test_fun])
     except KeyboardInterrupt:
         logger.error('Training process was interrupted.')
         trainer.save_state_dict(params.dump_dir / params.experiment_name / 'interrupt.ch')

@@ -1,6 +1,10 @@
-from sklearn import metrics
+import logging
 from collections import defaultdict
+
 import numpy as np
+from sklearn import metrics
+
+logger = logging.getLogger(__name__)
 
 
 class AverageMeter:

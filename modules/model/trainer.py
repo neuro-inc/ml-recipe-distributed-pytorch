@@ -375,24 +375,23 @@ class Trainer:
 
             Trainer._update_console(tqdm_data, avg_meters)
 
-    def test(self, epoch_i):
+    def test(self, epoch_i, *, callbacks=None):
+        if callbacks is not None and not isinstance(callbacks, (list, tuple)):
+            callbacks = tuple(callbacks)
+
         if self.test_dataloader is not None:
             with torch.no_grad():
-                self._test(epoch_i)
+                self._test(epoch_i, callbacks=callbacks)
 
         if self.local_rank != -1:
             # Wait till validation ends in main process
             torch.distributed.barrier()
 
-    def _test(self, epoch_i):
+    def _test(self, epoch_i, *, callbacks=None):
         self.set_eval()
 
         avg_meters = defaultdict(AverageMeter)
-        map_meter = MAPMeter()
-
         tqdm_data = tqdm(self.test_dataloader, desc=f'Test (epoch #{epoch_i} / {self.n_epochs})')
-
-        keys_ = ['start_class', 'end_class', 'cls']
 
         for i, (inputs, labels) in enumerate(tqdm_data):
             (input_ids, attention_mask, token_type_ids), labels = self._to_device((inputs, labels))
@@ -403,35 +402,24 @@ class Trainer:
 
             self.loss(pred_logits, labels, avg_meters=avg_meters)
 
-            start_logits, end_logits, cls_logits = (pred_logits[k].detach().cpu() for k in keys_)
-            start_true, end_true, cls_true = (labels[k].detach().cpu() for k in keys_)
-
-            start_pred, end_pred, cls_pred = (torch.max(logits, dim=-1)[1] for logits in (start_logits, end_logits, cls_logits))
-
-            start_idxs = start_true != -1
-            end_idxs = end_true != -1
-
-            if any(start_idxs):
-                avg_meters['s_acc'].update(metrics.accuracy_score(start_true[start_idxs], start_pred[start_idxs]))
-            if any(end_idxs):
-                avg_meters['e_acc'].update(metrics.accuracy_score(end_true[end_idxs], end_pred[end_idxs]))
-            avg_meters['c_acc'].update(metrics.accuracy_score(cls_true, cls_pred))
-
-            map_meter.update(keys=list(RawPreprocessor.labels2id.keys()),
-                             pred_probas=torch.softmax(cls_logits, dim=-1).numpy(),
-                             true_labels=cls_true.numpy())
+            if callbacks is not None:
+                for callback in callbacks:
+                    callback.at_iteration_end(pred_logits, labels, avg_meters)
 
             Trainer._update_console(tqdm_data, avg_meters)
 
-            if self.debug:
+            if self.debug and i >= 10:
                 logger.info('Test was interrupted because of debug mode.')
                 break
 
-        avg_meters.update(map_meter())
+        if callbacks is not None:
+            for callback in callbacks:
+                callback.at_epoch_end(avg_meters, self)
+
         self._update_writer(avg_meters, prefix='test')
 
-        self.metrics = {k: v() if isinstance(v, AverageMeter) else v for k, v in avg_meters.items()}
-        logger.info(f'Test metrics after epoch {epoch_i} - {Trainer._get_console_str(self.metrics)}')
+        metrics = {k: v() if isinstance(v, AverageMeter) else v for k, v in avg_meters.items()}
+        logger.info(f'Test metrics after epoch {epoch_i} - {Trainer._get_console_str(metrics)}')
 
     def save_state_dict(self, path_):
         if self.local_rank not in [-1, 0]:
