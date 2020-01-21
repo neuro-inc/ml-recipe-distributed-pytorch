@@ -62,7 +62,7 @@ HTTP_AUTH?=--http-auth
 TRAIN_STREAM_LOGS?=yes
 
 # Command to run training inside the environment. Example:
-TRAIN_CMD="bash -c 'pip install nltk && cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py -c $(CODE_DIR)/configs/$(CONFIG_NAME)'"
+TRAIN_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py -c $(CODE_DIR)/configs/$(CONFIG_NAME)'"
 
 LOCAL_PORT?=2211
 
@@ -328,7 +328,7 @@ train: _check_setup upload-code upload-config   ### Run a training job (set up e
 		$(TRAIN_CMD)
 ifeq (${TRAIN_STREAM_LOGS}, yes)
 	@echo "Streaming logs of the job $(TRAIN_JOB)-$(RUN)"
-	$(NEURO) exec --no-key-check -T $(TRAIN_JOB)-$(RUN) "tail -f /output" || echo -e "Stopped streaming logs.\nUse 'neuro logs <job>' to see full logs."
+	$(NEURO) exec --no-key-check -T $(TRAIN_JOB)-$(RUN) "tail -f -n 1000000 /output" || echo -e "Stopped streaming logs.\nUse 'neuro logs <job>' to see full logs."
 endif
 
 .PHONY: kill-train
