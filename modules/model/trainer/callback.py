@@ -103,7 +103,7 @@ class SaveBestCallback(TestCallback):
                             f'and equals to {self.value:.3f}')
             else:
                 logger.info(f'Best value {self.value:.3f} of {self.metric} was not bitten '
-                            f'with {trainer.metrics[self.metric]:.3f}')
+                            f'with {metrics[self.metric]:.3f}')
         else:
             logger.warning(f'Trainer metrics do not contain metric {self.metric}.')
 
