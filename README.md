@@ -1,10 +1,11 @@
-# qa_competition
+# Example of distributed training with Neuro platform
 
 # Description
 
 This project is created from 
 [Neuro Platform Project Template](https://github.com/neuromation/cookiecutter-neuro-project).
-
+The main idea is to show how it's easy to train your models in a distributed way on Neuro platform.
+  
 # Development Environment
 
 This project is designed to run on [Neuro Platform](https://neu.ro), so you can jump into problem-solving right away.
@@ -15,9 +16,9 @@ This project is designed to run on [Neuro Platform](https://neu.ro), so you can 
 |:------------------------------------ |:----------------- |:---------------------------------------------------------------------------- |:-------------------------- | 
 | `data/`                              | Data              | `storage:qa-competition/data/`                              | `/qa-competition/data/` | 
 | `modules/` | Python modules    | `storage:qa-competition/modules/` | `/qa-competition/modules/` |
-| `config/`                            | Configuration files | `storage:qa-competition/config/`                          | `/qa-competition/modules/` |
+| `modules/configs/`                            | Configuration files | `storage:qa-competition/config/`                          | `/qa-competition/modules/` |
 | `notebooks/`                         | Jupyter notebooks | `storage:qa-competition/notebooks/`                         | `/qa-competition/notebooks/` |
-| No directory                         | Logs and results  | `storage:qa-competition/results/`                           | `/qa-competition/results/` |
+| `results`                         | Logs and results  | `storage:qa-competition/results/`                           | `/qa-competition/results/` |
 
 ## Development
 
@@ -32,6 +33,13 @@ Follow the instructions below to set up the environment and start Jupyter develo
 * A new job is started in our [base environment](https://hub.docker.com/r/neuromation/base). 
 * Pip requirements from `requirements.txt` and apt applications from `apt.txt` are installed in this environment.
 * The updated environment is saved under a new project-dependent name and is used further on.
+
+### Run distributed training on Neuro platform
+
+To try to fine-tune your own Bert model on the platform you just need to run script 
+`modules/scripts/run_distributed_on_platform.sh`. You don't need to download any data 
+to do it, because we provide a "dummy" dataset which allows running the project without
+ any preparations except login on platform.  
 
 ### Run Jupyter with GPU 
 
