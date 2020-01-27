@@ -234,15 +234,18 @@ class Trainer:
 
     @staticmethod
     def _init_dataloader(dataset, name, *, batch_size=1, n_jobs=0, sampler=None, drop_last=False, collate_fun=None):
+        if dataset is None:
+            return None
+
         logger.info(f'{name} dataset len: {len(dataset)}. #JOBS: {n_jobs}.')
 
-        return None if dataset is None else torch.utils.data.DataLoader(dataset,
-                                                                        batch_size=batch_size,
-                                                                        num_workers=n_jobs,
-                                                                        sampler=sampler,
-                                                                        drop_last=drop_last,
-                                                                        shuffle=False,
-                                                                        collate_fn=collate_fun)
+        return torch.utils.data.DataLoader(dataset,
+                                           batch_size=batch_size,
+                                           num_workers=n_jobs,
+                                           sampler=sampler,
+                                           drop_last=drop_last,
+                                           shuffle=False,
+                                           collate_fn=collate_fun)
 
     @staticmethod
     def _init_writer(local_rank, writer_dir):
@@ -375,21 +378,22 @@ class Trainer:
             Trainer._update_console(tqdm_data, avg_meters)
 
     def test(self, epoch_i, *, callbacks=None):
-        if self.test_dataloader is None:
-            logger.warning('You have not specified test dataset, so you cannot run test method.')
-            return
+        if self.local_rank in [0, -1]:
+            if self.test_dataloader is None:
+                logger.warning('You have not specified test dataset, so you cannot run test method.')
+                return
 
-        if callbacks is not None and not isinstance(callbacks, (list, tuple)):
-            callbacks = tuple(callbacks)
+            if callbacks is not None and not isinstance(callbacks, (list, tuple)):
+                callbacks = tuple(callbacks)
 
-        assert all(isinstance(c, TestCallback) for c in callbacks)
+            assert all(isinstance(c, TestCallback) for c in callbacks)
 
-        if self.test_dataloader is not None:
-            with torch.no_grad():
-                self._test(epoch_i, callbacks=callbacks)
+            if self.test_dataloader is not None:
+                with torch.no_grad():
+                    self._test(epoch_i, callbacks=callbacks)
 
         if self.local_rank != -1:
-            # Wait till validation ends in main process
+            logger.warning('Waiting till validation ends in main process..')
             torch.distributed.barrier()
 
     @torch.no_grad()
