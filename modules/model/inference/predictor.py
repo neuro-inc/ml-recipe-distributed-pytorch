@@ -6,7 +6,7 @@ import torch
 # from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from .. utils.async_dataloader import AsyncDatasetProcessor
+from .. utils.list_dataloader import ListDataloader
 from .. dataset import RawPreprocessor
 
 logger = logging.getLogger(__name__)
@@ -104,12 +104,12 @@ class Predictor:
         #                            num_workers=self.n_jobs,
         #                            collate_fn=self.collate_fun)
 
-        async_dataset = AsyncDatasetProcessor(dataset,
-                                              batch_size=self.batch_size,
-                                              n_jobs=self.n_jobs,
-                                              collate_fun=self.collate_fun,
-                                              buffer_size=self.buffer_size,
-                                              shuffle=True)
+        async_dataset = ListDataloader(dataset,
+                                       batch_size=self.batch_size,
+                                       n_jobs=self.n_jobs,
+                                       collate_fun=self.collate_fun,
+                                       buffer_size=self.buffer_size,
+                                       shuffle=True)
 
         if save_dump:
             self.dump = []

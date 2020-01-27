@@ -6,8 +6,7 @@ import numpy as np
 logger = logging.getLogger(__file__)
 
 
-# todo: not async
-class AsyncDatasetProcessorIterator:
+class ListDalatoaderIterator:
     def __init__(self, processor):
         self.manager = mp.Manager()
         self.pool_queue = self.manager.Queue(processor.buffer_size)
@@ -19,14 +18,12 @@ class AsyncDatasetProcessorIterator:
 
         self.num_done_jobs = 0
 
-    def _job_done(self, *args, **kwargs):
+    def _job_done_callback(self, *args, **kwargs):
         self.num_done_jobs += 1
 
     @staticmethod
     def _worker_fun(dataset, idx, pool_queue):
-        # print('HERE 6')
         chunks = dataset[idx]
-        # print('HERE 7')
         for chunk in chunks:
             pool_queue.put(chunk)
 
@@ -34,28 +31,23 @@ class AsyncDatasetProcessorIterator:
         return self._generator()
 
     def _generator(self):
-        idxs = range(len(self.processor.dataset))
-        # print('HERE 1')
+        idxs = np.arange(0, len(self.processor.dataset))
         if self.processor.shuffle:
-            idxs = np.asarray(idxs)
             np.random.shuffle(idxs)
-        # print('HERE 2')
+
         for idx in idxs:
-            self.jobs.append(self.pool.apply_async(AsyncDatasetProcessorIterator._worker_fun,
+            self.jobs.append(self.pool.apply_async(ListDalatoaderIterator._worker_fun,
                                                    (self.processor.dataset, idx, self.pool_queue),
-                                                   callback=self._job_done))
-        # print('HERE 3')
+                                                   callback=self._job_done_callback))
         batch = []
         while True:
-            # print('HERE 4')
             chunk = self.pool_queue.get()
-            # print('HERE 5')
             batch.append(chunk)
             if len(batch) == self.processor.batch_size:
                 yield self.processor.process_batch(batch)
                 batch = []
 
-            if self.pool_queue.empty() and self.num_done_jobs == len(self.processor.dataset):
+            if self.pool_queue.empty() and self.num_done_jobs == len(idxs):
                 break
 
         if len(batch):
@@ -69,7 +61,7 @@ class AsyncDatasetProcessorIterator:
         self._close_jobs()
 
 
-class AsyncDatasetProcessor:
+class ListDataloader:
     def __init__(self, dataset, batch_size, *,
                  n_jobs=4,
                  collate_fun=None,
@@ -89,4 +81,4 @@ class AsyncDatasetProcessor:
         return self.collate_fun(batch) if self.collate_fun is not None else batch
 
     def __iter__(self):
-        return iter(AsyncDatasetProcessorIterator(self))
+        return iter(ListDalatoaderIterator(self))
