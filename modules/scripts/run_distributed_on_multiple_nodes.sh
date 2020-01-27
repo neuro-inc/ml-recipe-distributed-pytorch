@@ -1,4 +1,4 @@
- export LOCAL_RANK=1
+ export LOCAL_RANK=0
  export MASTER_IP=job-6ccd8dd5-649d-4720-b82b-ea7c4c11a463.platform-jobs
  export MASTER_PORT=9080
  export WORLD_SIZE=2

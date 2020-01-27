@@ -66,8 +66,8 @@ TRAIN_STREAM_LOGS?=yes
 SCRIPT_NAME=main_worker.sh
 CONFIG_NAME=test_bert.sh
 
-TRAIN_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py -c $(CODE_DIR)/configs/$(CONFIG_NAME)'"
-DIST_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && chmod +x ./$(CODE_DIR)/scripts/$(SCRIPT_NAME) && ./$(CODE_DIR)/scripts/$(SCRIPT_NAME) -c $(CODE_DIR)/configs/$(CONFIG_NAME)'"
+TRAIN_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py -c $(CONFIG_DIR)/$(CONFIG_NAME)'"
+DIST_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && chmod +x ./$(CODE_DIR)/scripts/$(SCRIPT_NAME) && ./$(CODE_DIR)/scripts/$(SCRIPT_NAME) -c $(CONFIG_DIR)/$(CONFIG_NAME)'"
 
 LOCAL_PORT?=2211
 
