@@ -71,7 +71,7 @@ def get_model_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--attention_probs_dropout_prob', type=float, default=0.1, help='')
     parser.add_argument('--layer_norm_eps', type=float, default=1e-12, help='')
 
-    parser.add_argument('--vocab_file', required=True, type=str, help='')
+    parser.add_argument('--vocab_file', type=cast2(str), default=None, help='')
     parser.add_argument('--merges_file', type=cast2(str), default=None, help='')
 
     parser.add_argument('--lowercase', action='store_true', help='')
@@ -117,7 +117,10 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--w_end_reg', type=float, default=0, help='')
     parser.add_argument('--w_cls', type=float, default=1, help='')
 
-    parser.add_argument('--focal', action='store_true', help='')
+    parser.add_argument('--loss', type=str, default='ce', choices=['ce', 'focal', 'smooth'], help='')
+
+    parser.add_argument('--smooth_alpha', type=float, default=0.01, help='')
+
     parser.add_argument('--focal_alpha', type=float, default=1, help='')
     parser.add_argument('--focal_gamma', type=float, default=2, help='')
 
@@ -133,9 +136,10 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--drop_optimizer', action='store_true', help='')
 
     parser.add_argument('--debug', action='store_true', help='Debug mode.')
+    parser.add_argument('--dummy_dataset', action='store_true', help='Debug mode.')
 
     parser.add_argument('--local_rank', type=int, default=-1, help='')
-    parser.add_argument('--dist_backend', type=str, default='nccl', help='')
+    parser.add_argument('--dist_backend', type=str, default='nccl', choices=['nccl'], help='')
     parser.add_argument('--dist_init_method', type=str, default='tcp://127.0.0.1:9080', help='')
     parser.add_argument('--dist_world_size', type=int, default=1, help='')
 
@@ -190,5 +194,8 @@ def get_predictor_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--max_seq_len', type=int, default=384, help='')
     parser.add_argument('--max_question_len', type=int, default=64, help='')
     parser.add_argument('--doc_stride', type=int, default=128, help='')
+
+    parser.add_argument('--split_by_sentence', action='store_true', help='')
+    parser.add_argument('--truncate', action='store_true', help='')
 
     return parser

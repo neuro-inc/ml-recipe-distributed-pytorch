@@ -18,7 +18,10 @@ def get_validation_dataset(params, *, tokenizer=None, clear=False):
                                    clear=clear)
     _, _, (_, _, val_indexes, val_labels) = preprocessor()
 
-    val_dataset = ChunkDataset(params.processed_data_path, tokenizer, val_indexes)
+    val_dataset = ChunkDataset(params.processed_data_path, tokenizer, val_indexes,
+                               test=False,
+                               split_by_sentence=True,
+                               truncate=True)
 
     return val_dataset
 
@@ -31,7 +34,7 @@ def main(params, model_params):
 
     model, tokenizer = init_model(model_params, checkpoint=params.checkpoint, device=device)
 
-    # todo: wtf?
+    # todo: Tokenizer from tokenizers does not work with my implementation of dataloader
     tokenizer = BertTokenizer.from_pretrained(model_params.model)
     tokenizer.model_name = 'bert'
 

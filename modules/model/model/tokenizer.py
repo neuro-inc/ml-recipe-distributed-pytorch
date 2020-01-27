@@ -52,6 +52,9 @@ class Tokenizer:
         else:
             raise NotImplementedError(f'Tokenizer initialization for model {model_name} is not implemented.')
 
+    def __len__(self):
+        return self.tokenizer._tokenizer.get_vocab_size()
+
     def encode(self, string):
         return self.tokenizer.encode(string).ids
 
