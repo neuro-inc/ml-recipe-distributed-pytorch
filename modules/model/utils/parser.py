@@ -80,11 +80,29 @@ def get_model_parser() -> configargparse.ArgumentParser:
     return parser
 
 
+def init_base_arguments(parser):
+    parser.add_argument('-c', '--config_file', required=False, is_config_file=True, help='Config file path.')
+
+    parser.add_argument('--data_path', type=str, required=True, help='')
+    parser.add_argument('--processed_data_path', type=str, required=True, help='')
+
+    parser.add_argument('--gpu', action='store_true', help='Use gpu to train or validate models.')
+
+    parser.add_argument('--max_seq_len', type=int, default=384, help='')
+    parser.add_argument('--max_question_len', type=int, default=64, help='')
+    parser.add_argument('--doc_stride', type=int, default=128, help='')
+
+    parser.add_argument('--split_by_sentence', action='store_true', help='')
+    parser.add_argument('--truncate', action='store_true', help='')
+
+    parser.add_argument('--n_jobs', type=int, default=16, help='')
+
+
 def get_trainer_parser() -> configargparse.ArgumentParser:
 
     parser = configargparse.ArgumentParser(description='Trainer config parser.')
+    init_base_arguments(parser)
 
-    parser.add_argument('-c', '--config_file', required=False, is_config_file=True, help='Config file path.')
     parser.add_argument('--trainer_config_file', required=False, is_config_file=True, help='Trainer config file path.')
 
     parser.add_argument('--dump_dir', type=Path, default='../results', help='Dump path.')
@@ -92,11 +110,8 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
 
     parser.add_argument('--last', type=cast2(str), default=None, help='Restored checkpoint.')
 
-    parser.add_argument('--gpu', action='store_true', help='Use gpu to train model.')
-
     parser.add_argument('--seed', type=cast2(int), default=None, help='Seed for random state.')
 
-    parser.add_argument('--n_jobs', type=int, default=2, help='Number of threads in data loader.')
     parser.add_argument('--n_epochs', type=int, default=10, help='Number of epochs.')
 
     parser.add_argument('--train_batch_size', type=int, default=128, help='Number of items in batch.')
@@ -107,8 +122,6 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate for optimizer.')
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for optimizer.')
 
-    parser.add_argument('--data_path', type=str, required=True, help='')
-    parser.add_argument('--processed_data_path', type=str, required=True, help='')
     parser.add_argument('--clear_processed', action='store_true', help='')
 
     parser.add_argument('--w_start', type=float, default=1, help='')
@@ -152,16 +165,9 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
     parser.add_argument('--finetune_position_reg', action='store_true', help='')
     parser.add_argument('--finetune_class', action='store_true', help='')
 
-    parser.add_argument('--max_seq_len', type=int, default=384, help='')
-    parser.add_argument('--max_question_len', type=int, default=64, help='')
-    parser.add_argument('--doc_stride', type=int, default=128, help='')
-
     parser.add_argument('--bpe_dropout', type=cast2(float), default=None, help='')
 
     parser.add_argument('--optimizer', type=str, default='adam', choices=['adam', 'adamod'], help='')
-
-    parser.add_argument('--split_by_sentence', action='store_true', help='')
-    parser.add_argument('--truncate', action='store_true', help='')
 
     parser.add_argument('--train_label_weights', action='store_true', help='')
     parser.add_argument('--train_sampler_weights', action='store_true', help='')
@@ -174,28 +180,15 @@ def get_trainer_parser() -> configargparse.ArgumentParser:
 
 def get_predictor_parser() -> configargparse.ArgumentParser:
     parser = configargparse.ArgumentParser(description='Validation config parser.')
+    init_base_arguments(parser)
 
-    parser.add_argument('-c', '--config_file', required=False, is_config_file=True, help='Config file path.')
     parser.add_argument('--predictor_config_file', required=False, is_config_file=True, help='Trainer config file path.')
 
     parser.add_argument('--checkpoint', required=True, type=cast2(str), help='')
 
-    parser.add_argument('--data_path', type=str, required=True, help='')
-    parser.add_argument('--processed_data_path', type=str, required=True, help='')
-
     parser.add_argument('--batch_size', type=int, default=16, help='')
-    parser.add_argument('--n_jobs', type=int, default=16, help='')
     parser.add_argument('--buffer_size', type=int, default=4096, help='')
 
     parser.add_argument('--limit', type=cast2(int), default=None, help='')
-
-    parser.add_argument('--gpu', action='store_true', help='Use gpu to train model.')
-
-    parser.add_argument('--max_seq_len', type=int, default=384, help='')
-    parser.add_argument('--max_question_len', type=int, default=64, help='')
-    parser.add_argument('--doc_stride', type=int, default=128, help='')
-
-    parser.add_argument('--split_by_sentence', action='store_true', help='')
-    parser.add_argument('--truncate', action='store_true', help='')
 
     return parser
