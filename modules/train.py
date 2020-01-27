@@ -39,7 +39,7 @@ def run_worker(device, params, model_params):
 
     log_file = params.log_file if params.local_rank in [-1, 0] else None
     log_level = logging.INFO if params.local_rank in [-1, 0] else logging.WARN
-    logger = get_logger(level=log_level, filename=log_file, filemode='a', logger_name='train')
+    logger = get_logger(level=log_level, filename=log_file, filemode='a', logger_name='train', debug=params.debug)
 
     logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
 
@@ -133,7 +133,7 @@ def main(params, model_params) -> None:
                 f'World size: {params.dist_world_size}, #GPU: {params.dist_ngpus_per_node}.')
 
     if params.distributed and params.local_rank in [0, -1]:
-        logger.info('Preparing dataset in main process.')
+        logger.info('Preparing dataset in main process if it is required...')
         _ = init_datasets(params, tokenizer=None, clear=params.clear_processed)
 
     if params.distributed_mp:
@@ -153,7 +153,7 @@ if __name__ == '__main__':
 
     params.n_jobs = min(params.n_jobs, mp.cpu_count() // 2)
 
-    logger = get_logger(filename=params.log_file, filemode='w', logger_name='train')
+    logger = get_logger(filename=params.log_file, filemode='w', logger_name='train', debug=params.debug)
 
     if params.local_rank in [0, -1]:
         write_config_file(parser, params, params.dump_dir / params.experiment_name / 'trainer.cfg')

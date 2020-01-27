@@ -7,7 +7,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 
-def get_logger(*, level=logging.INFO, filename=None, filemode='w', logger_name=None):
+def get_logger(*, level=logging.INFO, filename=None, filemode='w', logger_name=None, debug=False):
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
 
@@ -15,7 +15,9 @@ def get_logger(*, level=logging.INFO, filename=None, filemode='w', logger_name=N
     if filename is not None:
         handlers.append(logging.FileHandler(filename, filemode))
 
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+    path_format = '%(pathname)s:%(funcName)s:%(lineno)d' if debug else '%(name)s'
+
+    logging.basicConfig(format=f'%(asctime)s - %(levelname)s - {path_format} -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=level,
                         handlers=handlers)

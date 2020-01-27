@@ -80,9 +80,6 @@ def init_model(model_params, *, checkpoint=None, device=torch.device('cpu'), bpe
 
 
 def init_datasets(params, *, tokenizer=None, clear=False):
-    preprocessor = RawPreprocessor(raw_json=params.data_path,
-                                   out_dir=params.processed_data_path,
-                                   clear=clear)
     # dummy_dataset
     weights = defaultdict(lambda: None)
 
@@ -96,6 +93,9 @@ def init_datasets(params, *, tokenizer=None, clear=False):
 
     else:
         dataset_class = SplitDataset
+        preprocessor = RawPreprocessor(raw_json=params.data_path,
+                                       out_dir=params.processed_data_path,
+                                       clear=clear)
 
         labels_counter, labels, (train_indexes, train_labels, test_indexes, test_labels) = preprocessor()
 
