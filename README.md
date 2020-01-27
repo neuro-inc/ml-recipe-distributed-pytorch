@@ -18,6 +18,7 @@ This project is designed to run on [Neuro Platform](https://neu.ro), so you can 
 | `modules/` | Python modules    | `storage:qa-competition/modules/` | `/qa-competition/modules/` |
 | `configs/`                            | Configuration files | `storage:qa-competition/config/`                          | `/qa-competition/modules/` |
 | `notebooks/`                         | Jupyter notebooks | `storage:qa-competition/notebooks/`                         | `/qa-competition/notebooks/` |
+| `scripts/`                         | `Bash` scripts  | `storage:qa-competition/scripts/`                         | `/qa-competition/scripts/` |
 | `results/`                         | Logs and results  | `storage:qa-competition/results/`                           | `/qa-competition/results/` |
 
 ## Development

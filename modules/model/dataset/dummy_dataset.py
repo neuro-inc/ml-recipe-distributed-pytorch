@@ -20,12 +20,14 @@ class DummyDataset:
 
         self.w_ids = [self.tokenizer.pad_token_id,
                       self.tokenizer.sep_token_id,
-                      self.tokenizer.cls_token_id]
+                      self.tokenizer.cls_token_id] if tokenizer is not None else None
 
     def __len__(self):
         return self.dataset_len
 
     def _delete_special(self, ids):
+        assert self.w_ids is not None, f'Dataset {type(self).__name__} was initialized with None tokenizer.'
+
         for w_id in self.w_ids:
             ids[ids == w_id] = self.tokenizer.unk_token_id
 

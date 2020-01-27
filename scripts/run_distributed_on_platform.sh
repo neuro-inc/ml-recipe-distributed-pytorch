@@ -18,7 +18,8 @@ make dist PRESET=$PRESET \
           CONFIG_NAME=$CONFIG_NAME \
           RUN=master &
 
-sleep 5
+# idk: sometimes it fails to run worker jobs
+sleep 10
 
 MASTER_IP=$(neuro status dist-qa-competition-master | awk '/Internal Hostname:/ {print $3}')
 

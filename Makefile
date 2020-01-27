@@ -8,6 +8,7 @@ CONFIG_DIR?=config
 CODE_DIR?=modules
 NOTEBOOKS_DIR?=notebooks
 RESULTS_DIR?=results
+SCRIPTS_DIR?=scripts
 
 PROJECT_FILES=requirements.txt apt.txt setup.cfg env.sh
 
@@ -67,7 +68,7 @@ SCRIPT_NAME=main_worker.sh
 CONFIG_NAME=test_bert.sh
 
 TRAIN_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py -c $(CONFIG_DIR)/$(CONFIG_NAME)'"
-DIST_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && chmod +x ./$(CODE_DIR)/scripts/$(SCRIPT_NAME) && ./$(CODE_DIR)/scripts/$(SCRIPT_NAME) -c $(CONFIG_DIR)/$(CONFIG_NAME)'"
+DIST_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && chmod +x $(SCRIPTS_DIR)/$(SCRIPT_NAME) && $(SCRIPTS_DIR)/$(SCRIPT_NAME) -c $(CONFIG_DIR)/$(CONFIG_NAME)'"
 
 LOCAL_PORT?=2211
 
@@ -144,6 +145,7 @@ setup: ### Setup remote environment
 		$(DATA_DIR_STORAGE) \
 		$(PROJECT_PATH_STORAGE)/$(CONFIG_DIR) \
 		$(PROJECT_PATH_STORAGE)/$(NOTEBOOKS_DIR) \
+		$(PROJECT_PATH_STORAGE)/$(SCRIPTS_DIR) \
 		$(RESULTS_DIR_STORAGE)
 	$(NEURO) run \
 		--name $(SETUP_JOB) \
@@ -184,6 +186,18 @@ download-code: _check_setup  ### Download code directory from the platform stora
 .PHONY: clean-code
 clean-code: _check_setup  ### Delete code directory from the platform storage
 	$(NEURO) rm --recursive $(PROJECT_PATH_STORAGE)/$(CODE_DIR)/*
+
+.PHONY: upload-scripts
+upload-scripts: _check_setup  ### Upload directory with scripts to the platform storage
+	$(NEURO) cp --recursive --update --no-target-directory $(SCRIPTS_DIR) $(PROJECT_PATH_STORAGE)/$(SCRIPTS_DIR)
+
+.PHONY: download-scripts
+download-scripts: _check_setup  ### Download directory with scripts from the platform storage
+	$(NEURO) cp --recursive --update --no-target-directory $(PROJECT_PATH_STORAGE)/$(SCRIPTS_DIR) $(SCRIPTS_DIR)
+
+.PHONY: clean-scripts
+clean-scripts: _check_setup  ### Delete directory with scripts from the platform storage
+	$(NEURO) rm --recursive $(PROJECT_PATH_STORAGE)/$(SCRIPTS_DIR)/*
 
 .PHONY: upload-data
 upload-data: _check_setup  ### Upload data directory to the platform storage
@@ -234,13 +248,13 @@ clean-results: _check_setup  ### Delete results directory from the platform stor
 	$(NEURO) rm --recursive $(RESULTS_DIR_STORAGE)/*
 
 .PHONY: upload-all
-upload-all: upload-code upload-data upload-config upload-notebooks upload-results  ### Upload code, data, config, notebooks, and results directories to the platform storage
+upload-all: upload-code upload-scripts upload-data upload-config upload-notebooks upload-results  ### Upload code, scripts, data, config, notebooks, and results directories to the platform storage
 
 .PHONY: download-all
-download-all: download-code download-data download-config download-notebooks download-results  ### Download code, data, config, notebooks, and results directories from the platform storage
+download-all: download-code download-scripts download-data download-config download-notebooks download-results  ### Download code, data, config, notebooks, and results directories from the platform storage
 
 .PHONY: clean-all
-clean-all: clean-code clean-data clean-config clean-notebooks clean-results  ### Delete code, data, config, notebooks, and results directories from the platform storage
+clean-all: clean-code clean-scripts clean-data clean-config clean-notebooks clean-results  ### Delete code, data, config, notebooks, and results directories from the platform storage
 
 ##### Google Cloud Integration #####
 
@@ -279,7 +293,7 @@ wandb-check-auth:  ### Check if the file Weights and Biases authentication file 
 RUN?=base
 
 .PHONY: develop
-develop: _check_setup upload-code upload-config upload-notebooks  ### Run a development job
+develop: _check_setup upload-code upload-scripts upload-config upload-notebooks  ### Run a development job
 	$(NEURO) run \
 		--name $(DEVELOP_JOB)-$(RUN) \
 		--description "$(PROJECT_ID):develop" \
@@ -287,7 +301,8 @@ develop: _check_setup upload-code upload-config upload-notebooks  ### Run a deve
 		--detach \
 		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):rw \
-		--volume $(PROJECT_PATH_STORAGE)/$(CONFIG_DIR):$(PROJECT_PATH_ENV)/$(CONFIG_DIR):ro \
+		--volume $(PROJECT_PATH_STORAGE)/$(CONFIG_DIR):$(PROJECT_PATH_ENV)/$(CONFIG_DIR):rw \
+		--volume $(PROJECT_PATH_STORAGE)/$(SCRIPTS_DIR):$(PROJECT_PATH_ENV)/$(SCRIPTS_DIR):rw \
 		--volume $(RESULTS_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(RESULTS_DIR):rw \
 		--env PYTHONPATH=$(PROJECT_PATH_ENV) \
 		--env EXPOSE_SSH=yes \
@@ -314,7 +329,7 @@ kill-develop:  ### Terminate the development job
 	$(NEURO) kill $(DEVELOP_JOB)
 
 .PHONY: train
-train: _check_setup upload-code upload-config   ### Run a training job (set up env var 'RUN' to specify the training job),
+train: _check_setup upload-code upload-scripts upload-config   ### Run a training job (set up env var 'RUN' to specify the training job),
 	$(NEURO) run \
 		--name $(TRAIN_JOB)-$(RUN) \
 		--description "$(PROJECT_ID):train" \
@@ -324,6 +339,7 @@ train: _check_setup upload-code upload-config   ### Run a training job (set up e
 		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):ro \
 		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):ro \
 		--volume $(PROJECT_PATH_STORAGE)/$(CONFIG_DIR):$(PROJECT_PATH_ENV)/$(CONFIG_DIR):ro \
+		--volume $(PROJECT_PATH_STORAGE)/$(SCRIPTS_DIR):$(PROJECT_PATH_ENV)/$(SCRIPTS_DIR):ro \
 		--volume $(RESULTS_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(RESULTS_DIR):rw \
 		--env PYTHONPATH=$(PROJECT_PATH_ENV) \
 		--env EXPOSE_SSH=yes \
@@ -349,9 +365,8 @@ kill-train-all:  ### Terminate all training jobs you have submitted
 connect-train: _check_setup  ### Connect to the remote shell running on the training job (set up env var 'RUN' to specify the training job)
 	$(NEURO) exec --no-key-check $(TRAIN_JOB)-$(RUN) bash
 
-# $LOCAL_RANK --dist_world_size $WORLD_SIZE --dist_backend nccl --dist_init_method "tcp://${MASTER_IP}:${MASTER_PORT}
 .PHONY: dist
-dist: _check_setup upload-code upload-config   ### Run a training job (set up env var 'RUN' to specify the training job),
+dist: _check_setup upload-code upload-scripts upload-config   ### Run a distributed training job (set up env var 'RUN' to specify the training job),
 	$(NEURO) run \
 		--name $(DIST_JOB)-$(RUN) \
 		--description "$(PROJECT_ID):dist" \
@@ -361,6 +376,7 @@ dist: _check_setup upload-code upload-config   ### Run a training job (set up en
 		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CONFIG_DIR):$(PROJECT_PATH_ENV)/$(CONFIG_DIR):rw \
+		--volume $(PROJECT_PATH_STORAGE)/$(SCRIPTS_DIR):$(PROJECT_PATH_ENV)/$(SCRIPTS_DIR):rw \
 		--volume $(RESULTS_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(RESULTS_DIR):rw \
 		--env PYTHONPATH=$(PROJECT_PATH_ENV) \
 		--env EXPOSE_SSH=yes \
@@ -378,16 +394,16 @@ ifeq (${TRAIN_STREAM_LOGS}, yes)
 endif
 
 .PHONY: kill-dist
-kill-dist:  ### Terminate the training job (set up env var 'RUN' to specify the training job)
+kill-dist:  ### Terminate the distributed training job (set up env var 'RUN' to specify the training job)
 	$(NEURO) kill $(DIST_JOB)-$(RUN)
 
 .PHONY: kill-dist-all
-kill-dist-all:  ### Terminate all training jobs you have submitted
+kill-dist-all:  ### Terminate all distributed training jobs you have submitted
 	jobs=$$(neuro --quiet ps --description="$(PROJECT_ID):dist") && \
 	$(NEURO) kill $${jobs:-placeholder}
 
 .PHONY: jupyter
-jupyter: _check_setup upload-config upload-code upload-notebooks ### Run a job with Jupyter Notebook and open UI in the default browser
+jupyter: _check_setup upload-config upload-code upload-scripts upload-notebooks ### Run a job with Jupyter Notebook and open UI in the default browser
 	$(NEURO) run \
 		--name $(JUPYTER_JOB) \
 		--description "$(PROJECT_ID):jupyter" \

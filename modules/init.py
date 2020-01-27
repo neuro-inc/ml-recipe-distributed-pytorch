@@ -60,6 +60,7 @@ def init_model(model_params, *, checkpoint=None, device=torch.device('cpu'), bpe
                               handle_chinese_chars=model_params.handle_chinese_chars,
                               dropout=bpe_dropout)
     else:
+        logger.warning('Specify vocab file to use faster tokenizer implementation.')
         if model_params.model_name == 'bert':
             tokenizer = BertTokenizer.from_pretrained(model_params.model)
         elif model_params.model_name == 'robrta':

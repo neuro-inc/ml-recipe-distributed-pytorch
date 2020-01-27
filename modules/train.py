@@ -132,7 +132,7 @@ def main(params, model_params) -> None:
     logger.info(f'Distributed: {params.distributed}. Distributed multiprocessing: {params.distributed_mp}. '
                 f'World size: {params.dist_world_size}, #GPU: {params.dist_ngpus_per_node}.')
 
-    if params.distributed and params.local_rank in [0, -1]:
+    if params.distributed and params.local_rank == 0:
         logger.info('Preparing dataset in main process if it is required...')
         _ = init_datasets(params, tokenizer=None, clear=params.clear_processed)
 
