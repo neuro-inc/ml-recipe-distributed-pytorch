@@ -260,6 +260,7 @@ class SplitDataset:
         t2o = []
 
         tokenized_text = []
+        word_i = 0
         for word_i, word in enumerate(text, start=start + 1):
             o2t.append(len(tokenized_text) + history_len)
             if re.match(r'<.+>', word):
