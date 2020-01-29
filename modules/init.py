@@ -1,6 +1,7 @@
 import logging
 from collections import defaultdict
 import functools
+import os
 
 import numpy as np
 import torch
@@ -52,7 +53,7 @@ def init_model(model_params, *, checkpoint=None, device=torch.device('cpu'), bpe
     # todo: https://github.com/huggingface/transformers/issues/2392
     model_params.model = './data/roberta' if model_params.model_name == 'roberta' else model_params.model
 
-    if model_params.vocab_file is not None:
+    if model_params.vocab_file is not None and os.path.exists(model_params.vocab_file):
         tokenizer = Tokenizer(model_name=model_params.model_name,
                               vocab_file=model_params.vocab_file,
                               merges_file=model_params.merges_file,
