@@ -27,8 +27,8 @@ def get_validation_dataset(params, *, tokenizer=None, clear=False):
 
 
 def main(params, model_params):
-    show_params(model_params, 'predictor')
-    show_params(params, 'model')
+    show_params(model_params, 'model')
+    show_params(params, 'predictor')
 
     device = torch.device('cuda') if torch.cuda.is_available() and params.gpu else torch.device('cpu')
 
@@ -49,7 +49,9 @@ def main(params, model_params):
                           limit=params.limit)
 
     predictor(val_dataset)
-    predictor.show_predictions()
+    # predictor.show_predictions()
+
+    return predictor
 
 
 if __name__ == '__main__':

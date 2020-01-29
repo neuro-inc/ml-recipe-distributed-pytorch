@@ -3,7 +3,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 import torch
-# from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from .. utils.list_dataloader import ListDataloader
@@ -62,6 +61,8 @@ class Predictor:
             raise NotImplemented
 
     def _is_valid(self, item, score, start_id, end_id):
+        assert score >= 0
+
         if start_id > end_id:
             return False
 
@@ -87,22 +88,9 @@ class Predictor:
 
     @torch.no_grad()
     def __call__(self, dataset, *, save_dump=False):
-        # init_losses = {'start_class': (nn.CrossEntropyLoss(ignore_index=-1), params.w_start),
-        #                'end_class': (nn.CrossEntropyLoss(ignore_index=-1), params.w_end),
-        #                'start_reg': (nn.MSELoss(), params.w_start_reg),
-        #                'end_reg': (nn.MSELoss(), params.w_end_reg),
-        #                'cls': (FocalLossWithLogits(alpha=params.focal_alpha, gamma=params.focal_gamma) if params.focal
-        #                        else nn.CrossEntropyLoss(weight=train_weights['label_weights']), params.w_cls)}
-
         keys_ = ['start_class', 'end_class', 'start_reg', 'end_reg', 'cls']
 
         self.model.eval()
-
-        # async_dataset = DataLoader(dataset,
-        #                            batch_size=self.batch_size,
-        #                            shuffle=True,
-        #                            num_workers=self.n_jobs,
-        #                            collate_fn=self.collate_fun)
 
         async_dataset = ListDataloader(dataset,
                                        batch_size=self.batch_size,
@@ -121,20 +109,15 @@ class Predictor:
             preds = self.model(**inputs)
 
             start_preds, end_preds, start_reg_preds, end_reg_preds, cls_preds = [preds[k].detach().cpu() for k in keys_]
-            start_true, end_true, start_reg_true, end_reg_true, cls_true = [labels[k] for k in keys_]
+            # start_true, end_true, start_reg_true, end_reg_true, cls_true = [labels[k] for k in keys_]
 
             start_logits, start_ids = torch.max(start_preds, dim=-1)
             end_logits, end_ids = torch.max(end_preds, dim=-1)
 
             cls_probas, cls_ids = torch.max(torch.softmax(cls_preds, dim=-1), dim=-1)
 
-            # todo: juking
-            cls_probas[cls_true != cls_ids] = -1
-
-            # todo: score from paper https://arxiv.org/pdf/1901.08634.pdf
+            # score from paper https://arxiv.org/pdf/1901.08634.pdf
             scores = start_logits + end_logits - (start_preds[:, 0] + end_preds[:, 0])
-
-            # scores[cls_true != cls_ids] = -1
 
             self._update_candidates(scores.numpy(),
                                     start_ids.numpy(), end_ids.numpy(),
@@ -147,54 +130,15 @@ class Predictor:
             if self.limit is not None and batch_i >= self.limit:
                 break
 
-    def show_predictions(self):
-        for item_id, score in self.scores.items():
-            logger.info(20 * '=')
+    def show_predictions(self, *, n_docs=None):
+        for doc_i, doc_id in enumerate(self.scores.keys()):
+            if n_docs is not None and doc_i >= n_docs:
+                break
 
-            if item_id in self.items and item_id in self.candidates:
-                item = self.items[item_id]
+            doc = self.items[doc_id]
+            candidate = self.candidates[doc_id]
 
-                candidate = self.candidates[item_id]
-
-                start_id = candidate.start_id
-                end_id = candidate.end_id
-                # (start_id, end_id, label) = self.candidates[item_id]
-
-                true_start = item.true_start
-                true_end = item.true_end
-
-                if RawPreprocessor.id2labels[candidate.label] in ['short', 'long']:
-                    start_id += item.chunk_start - item.question_len - 2
-                    end_id += item.chunk_start - item.question_len - 2
-
-                    if 0 <= start_id < len(item.t2o):
-                        start_id = item.t2o[start_id]
-                    else:
-                        logger.warning(f'start_id: {start_id} is out of border: {len(item.t2o)}.')
-
-                    if 0 <= end_id < len(item.t2o):
-                        end_id = item.t2o[end_id]
-                    else:
-                        logger.warning(f'end_id: {end_id} is out of border: {len(item.t2o)}.')
-
-                    true_start = item.t2o[item.true_start]
-                    true_end = item.t2o[item.true_end]
-
-                    true_text = item.true_text.split()
-                    true_answer = ' '.join(true_text[true_start:true_end])
-                    pred_answer = ' '.join(true_text[start_id:end_id])
-
-                    logger.info(f'TRUE ANSWER: {true_answer}.')
-                    logger.info(f'PRED ANSWER: {pred_answer}.')
-
-                logger.info(f'id: {item_id}. q: {item.true_question}. score: {score}. '
-                            f'{(start_id, end_id, RawPreprocessor.id2labels[candidate.label])} | '
-                            f'{(true_start, true_end, RawPreprocessor.id2labels[item.true_label])}')
-
-                logger.info(f'start_reg: {candidate.start_reg}, end_reg: {candidate.end_reg}')
-
-            else:
-                logger.warning(f'Something wrong with {item_id}.')
-        # self.scores = defaultdict(int)
-        # self.candidates = {}
-        # self.items = {}
+            logger.info(f'Text: {doc.true_text}')
+            logger.info(f'Question: {doc.true_question}')
+            logger.info(f'True label: {RawPreprocessor.id2labels[doc.true_label]}. '
+                        f'Pred label: {RawPreprocessor.id2labels[candidate.label]}.')
