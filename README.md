@@ -41,6 +41,10 @@ To try to fine-tune your own Bert model on the platform you just need to run scr
 `modules/scripts/run_distributed_on_platform.sh`. You don't need to download any data 
 to do it, because we provide a "dummy" dataset which allows running the project without
  any preparations except login on platform.  
+ 
+In case, you want to try to train your own model with real data, just download 
+[TensorFlow 2.0 Question Answering](https://www.kaggle.com/c/tensorflow2-question-answering) 
+contest dataset.  
 
 ### Run Jupyter with GPU 
 
