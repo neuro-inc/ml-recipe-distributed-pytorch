@@ -6,7 +6,7 @@ from datetime import datetime
 import torch
 import torch.multiprocessing as mp
 
-from init import init_loss, init_model, init_datasets, init_collate_fun
+from init import init_loss, init_model, init_datasets, init_collate_fun, init_optimizer
 from utils import get_logger, set_seed, show_params
 
 from model.utils.parser import get_trainer_parser, get_model_parser, write_config_file, get_params
@@ -44,12 +44,15 @@ def run_worker(device, params, model_params):
     logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
 
     model, tokenizer = init_model(model_params, bpe_dropout=params.bpe_dropout)
+    optimizer = init_optimizer(params, model)
     train_dataset, test_dataset, train_weights = init_datasets(params, tokenizer=tokenizer, clear=False)
     loss = init_loss(params, train_weights)
 
     trainer = Trainer(model=model,
                       loss=loss,
                       collate_fun=init_collate_fun(tokenizer),
+
+                      optimizer=optimizer,
 
                       train_dataset=train_dataset,
                       test_dataset=test_dataset,
@@ -70,10 +73,6 @@ def run_worker(device, params, model_params):
                       batch_split=params.batch_split,
                       n_jobs=params.n_jobs,
 
-                      optimizer=params.optimizer,
-
-                      lr=params.lr,
-                      weight_decay=params.weight_decay,
                       warmup_coef=params.warmup_coef,
                       max_grad_norm=params.max_grad_norm,
 
@@ -82,12 +81,6 @@ def run_worker(device, params, model_params):
                       apex_loss_scale=params.apex_loss_scale,
 
                       train_weights=train_weights,
-
-                      finetune=params.finetune,
-                      finetune_transformer=params.finetune_transformer,
-                      finetune_position=params.finetune_position,
-                      finetune_position_reg=params.finetune_position_reg,
-                      finetune_class=params.finetune_class,
 
                       drop_optimizer=params.drop_optimizer,
                       debug=params.debug

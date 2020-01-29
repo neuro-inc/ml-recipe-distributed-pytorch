@@ -6,10 +6,11 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
-from transformers import BertTokenizer, RobertaTokenizer
+from transformers import BertTokenizer, RobertaTokenizer, AdamW
 
 from model.model import BertForQuestionAnswering, Tokenizer, LabelSmoothingLossWithLogits, FocalLossWithLogits, WeightedLoss
 from model.dataset import collate_fun, RawPreprocessor, SplitDataset, DummyDataset
+from model.trainer.optim import AdaMod
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,69 @@ def init_model(model_params, *, checkpoint=None, device=torch.device('cpu'), bpe
         _load_checkpoint(model, checkpoint, device=device)
 
     return model, tokenizer
+
+
+def _get_optimized_parameters(params, model):
+    if params.finetune:
+        # to froze batchnorms and dropouts
+        if params.apex_level is not None:
+            params.apex_level = None
+            logger.warning(f'Finetune mode is not supported with Apex.')
+
+        model.eval()
+
+        optimizer_parameters = []
+        modules = []
+
+        if params.finetune_transformer:
+            modules.append(model.transformer)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+
+        if params.finetune_position:
+            modules.append(model.position_outputs)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+
+        if params.finetune_position_reg:
+            modules.append(model.reg_start)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+            modules.append(model.reg_end)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+
+        if params.finetune_class:
+            modules.append(model.classifier)
+            optimizer_parameters.extend(list(modules[-1].named_parameters()))
+
+        if not modules:
+            raise AttributeError('Specify at least one module for fine-tuning.')
+
+        logger.info(f'Fine-tuned modules: transformer({params.finetune_transformer}), '
+                    f'position({params.finetune_position}),  classifier({params.finetune_class}).')
+
+    else:
+        modules = None
+        optimizer_parameters = list(model.named_parameters())
+
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    optimizer_grouped_parameters = [
+        {'params': [p for n, p in optimizer_parameters if not any(nd in n for nd in no_decay)],
+         'weight_decay': params.weight_decay},
+        {'params': [p for n, p in optimizer_parameters if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}]
+
+    return modules, optimizer_grouped_parameters
+
+
+def init_optimizer(params, model):
+    modules, optimizer_grouped_parameters = _get_optimized_parameters(params, model)
+
+    optimizer = AdamW(optimizer_grouped_parameters, lr=params.lr, correct_bias=False) if params.optimizer == 'adam' \
+        else AdaMod(optimizer_grouped_parameters, lr=params.lr)
+
+    logger.info(f'Used optimizer: {type(optimizer).__name__}.')
+
+    if modules is not None:
+        model.modules = modules
+
+    return optimizer
 
 
 def init_datasets(params, *, tokenizer=None, clear=False):

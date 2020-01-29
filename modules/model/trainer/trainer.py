@@ -9,11 +9,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler, DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
-from transformers import AdamW, get_linear_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup
 
 from .callback import TestCallback
 from .meters import *
-from .optim import AdaMod
 
 logger = logging.getLogger(__file__)
 
@@ -35,61 +34,13 @@ def initialize_apex(model, *, optimizer=None, apex_level=None,
     return model, optimizer
 
 
-def get_optimized_parameters(model, weight_decay, *,
-                             finetune=False,
-                             finetune_transformer=False,
-                             finetune_position=False,
-                             finetune_position_reg=False,
-                             finetune_class=False):
-    if finetune:
-        # to froze batchnorms and dropouts
-        model.eval()
-
-        optimizer_parameters = []
-        modules = []
-
-        if finetune_transformer:
-            modules.append(model.transformer)
-            optimizer_parameters.extend(list(modules[-1].named_parameters()))
-
-        if finetune_position:
-            modules.append(model.position_outputs)
-            optimizer_parameters.extend(list(modules[-1].named_parameters()))
-
-        if finetune_position_reg:
-            modules.append(model.reg_start)
-            optimizer_parameters.extend(list(modules[-1].named_parameters()))
-            modules.append(model.reg_end)
-            optimizer_parameters.extend(list(modules[-1].named_parameters()))
-
-        if finetune_class:
-            modules.append(model.classifier)
-            optimizer_parameters.extend(list(modules[-1].named_parameters()))
-
-        if not modules:
-            raise AttributeError('Specify at least one module for fine-tuning.')
-
-        logger.info(f'Fine-tuned modules: transformer({finetune_transformer}), '
-                    f'position({finetune_position}),  classifier({finetune_class}).')
-
-    else:
-        modules = [model]
-        optimizer_parameters = list(model.named_parameters())
-
-    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
-    optimizer_grouped_parameters = [
-        {'params': [p for n, p in optimizer_parameters if not any(nd in n for nd in no_decay)],
-         'weight_decay': weight_decay},
-        {'params': [p for n, p in optimizer_parameters if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}]
-
-    return modules, optimizer_grouped_parameters
-
-
 @dataclass
 class Trainer:
     model: nn.Module
     loss: Any
     collate_fun: Any
+
+    optimizer: Any = None
 
     train_dataset: Any = None
     test_dataset: Any = None
@@ -110,10 +61,6 @@ class Trainer:
     batch_split: int = 1
     n_jobs: int = 4
 
-    optimizer: str = 'adam'
-
-    lr: float = 1e-3
-    weight_decay: float = 5e-4
     warmup_coef: float = 0.01
     max_grad_norm: float = 1
 
@@ -122,12 +69,6 @@ class Trainer:
     apex_loss_scale: float = None
 
     train_weights: defaultdict = None
-
-    finetune: bool = False
-    finetune_transformer: bool = False
-    finetune_position: bool = False
-    finetune_position_reg: bool = False
-    finetune_class: bool = False
 
     drop_optimizer: bool = False
     debug: bool = False
@@ -146,25 +87,9 @@ class Trainer:
         self.model = self.model.to(self.device)
         self.loss = self.loss.to(self.device)
 
-        if self.finetune and self.apex_level is not None:
-            logger.warning(f'Finetune mode is not supported with Apex.')
-            self.apex_level = None
-
-        # todo: not universal approach
-        self.modules, optimizer_grouped_parameters = get_optimized_parameters(
-            self.model, self.weight_decay,
-            finetune=self.finetune,
-            finetune_transformer=self.finetune_transformer,
-            finetune_position=self.finetune_position,
-            finetune_position_reg=self.finetune_position_reg,
-            finetune_class=self.finetune_class)
-
-        self.optimizer = AdamW(optimizer_grouped_parameters, lr=self.lr, correct_bias=False) if self.optimizer == 'adam' \
-            else AdaMod(optimizer_grouped_parameters, lr=self.lr)
-        logger.info(f'Used optimizer: {type(self.optimizer).__name__}.')
-
         self.scheduler = None
-        if self.train_dataset is not None and self.warmup_coef > 0:
+        use_scheduler = self.train_dataset is not None and self.optimizer is not None and self.warmup_coef > 0
+        if use_scheduler:
             # todo: incorrect value during distributed training?
             num_training_steps = self.n_epochs * len(self.train_dataset) // self.train_batch_size
             num_warmup_steps = int(num_training_steps * self.warmup_coef)
@@ -301,18 +226,18 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
     def set_train(self):
-        if self.apex_level is not None:
-            self.model.train()
-        else:
-            for module in self.modules:
+        if self.apex_level is None and hasattr(self.model, 'modules'):
+            for module in self.model.modules:
                 module.train()
+        else:
+            self.model.train()
 
     def set_eval(self):
-        if self.apex_level is not None:
-            self.model.eval()
-        else:
-            for module in self.modules:
+        if self.apex_level is None and hasattr(self.model, 'modules'):
+            for module in self.model.modules:
                 module.eval()
+        else:
+            self.model.eval()
 
     def _to_device(self, data):
         if isinstance(data, (list, tuple)):
