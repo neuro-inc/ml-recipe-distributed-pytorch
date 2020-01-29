@@ -190,7 +190,6 @@ class Trainer:
                 )
             else:
                 self.model = torch.nn.parallel.DistributedDataParallel(self.model, find_unused_parameters=True)
-        # todo: add nn.dataparallel?
 
         self.train_dataloader = Trainer._init_dataloader(self.train_dataset,
                                                          'Train',
