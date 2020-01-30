@@ -492,18 +492,16 @@ def collate_fun(items, tokenizer, return_items=False):
 
     max_len = max([len(item.input_ids) for item in items])
     tokens = pad_token_id * np.ones((batch_size, max_len), dtype=np.int64)
-    # todo: wtf
-    token_type_ids = np.zeros((batch_size, max_len), dtype=np.int64) if tokenizer.model_name == 'roberta' \
-        else np.ones((batch_size, max_len), dtype=np.int64)
+
+    type_coef = 1 if tokenizer.model_name == 'bert' else 0
+    token_type_ids = type_coef * np.ones((batch_size, max_len), dtype=np.int64)
 
     for i, item in enumerate(items):
         row = item.input_ids
 
         tokens[i, :len(row)] = row
-        # todo: wtf
-        if tokenizer.model_name == 'bert':
-            token_type_id = [0 if i <= row.index(tokenizer.sep_token_id) else 1 for i in range(len(row))]
-            token_type_ids[i, :len(row)] = token_type_id
+        if type_coef:
+            token_type_ids[i, :len(row)] = [0 if i <= row.index(tokenizer.sep_token_id) else 1 for i in range(len(row))]
 
     attention_mask = tokens > 0
     inputs = {'input_ids': torch.from_numpy(tokens),
