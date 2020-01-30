@@ -169,7 +169,6 @@ setup: ### Setup remote environment
 	$(NEURO) --network-timeout 300 job save $(SETUP_JOB) $(CUSTOM_ENV_NAME)
 	$(NEURO) kill $(SETUP_JOB)
 	@touch .setup_done
-# $(NEURO) exec --no-key-check $(SETUP_JOB) "bash -c 'git clone https://github.com/NVIDIA/apex && cd apex && pip install -v --no-cache-dir ./'"
 
 .PHONY: kill-setup
 kill-setup:  ### Terminate the setup job (if it was not killed by `make setup` itself)
