@@ -21,6 +21,11 @@ class ListDalatoaderIterator:
     def _job_done_callback(self, *args, **kwargs):
         self.num_done_jobs += 1
 
+    def _job_error_callback(self, error):
+        logger.error(error)
+        self.pool.terminate()
+        raise error
+
     @staticmethod
     def _worker_fun(dataset, idx, pool_queue):
         chunks = dataset[idx]
@@ -31,31 +36,39 @@ class ListDalatoaderIterator:
         return self._generator()
 
     def _generator(self):
-        idxs = np.arange(0, len(self.processor.dataset))
-        if self.processor.shuffle:
-            np.random.shuffle(idxs)
+        try:
+            idxs = np.arange(0, len(self.processor.dataset))
+            if self.processor.shuffle:
+                np.random.shuffle(idxs)
 
-        for idx in idxs:
-            self.jobs.append(self.pool.apply_async(ListDalatoaderIterator._worker_fun,
-                                                   (self.processor.dataset, idx, self.pool_queue),
-                                                   callback=self._job_done_callback))
-        batch = []
-        while True:
-            chunk = self.pool_queue.get()
-            batch.append(chunk)
-            if len(batch) == self.processor.batch_size:
+            for idx in idxs:
+                self.jobs.append(self.pool.apply_async(ListDalatoaderIterator._worker_fun,
+                                                       (self.processor.dataset, idx, self.pool_queue),
+                                                       callback=self._job_done_callback,
+                                                       error_callback=self._job_error_callback))
+            batch = []
+            while True:
+                chunk = self.pool_queue.get()
+                batch.append(chunk)
+                if len(batch) == self.processor.batch_size:
+                    yield self.processor.process_batch(batch)
+                    batch = []
+
+                if self.pool_queue.empty() and self.num_done_jobs == len(idxs):
+                    break
+
+            if len(batch):
                 yield self.processor.process_batch(batch)
-                batch = []
 
-            if self.pool_queue.empty() and self.num_done_jobs == len(idxs):
-                break
-
-        if len(batch):
-            yield self.processor.process_batch(batch)
+        except Exception as e:
+            self._close_jobs()
+            raise e
 
     def _close_jobs(self):
         self.pool.close()
         self.pool.join()
+
+        self.manager.shutdown()
 
     def __del__(self):
         self._close_jobs()
