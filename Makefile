@@ -103,6 +103,12 @@ else
 	TRAIN_WAIT_START_OPTION=
 endif
 
+ifeq (${DIST_WAIT_START}, yes)
+	DIST_WAIT_START_OPTION=--wait-start
+else
+	DIST_WAIT_START_OPTION=
+endif
+
 # Check if GCP authentication file exists, then set up variables
 ifneq ($(wildcard ${GCP_SECRET_PATH_LOCAL}),)
 	OPTION_GCP_CREDENTIALS=\
@@ -372,7 +378,7 @@ dist: _check_setup upload-code upload-scripts upload-config   ### Run a distribu
 		--description "$(PROJECT_ID):dist" \
 		--preset $(PRESET) \
 		--detach \
-		$(TRAIN_WAIT_START_OPTION) \
+		$(DIST_WAIT_START_OPTION) \
 		--volume $(DATA_DIR_STORAGE):$(PROJECT_PATH_ENV)/$(DATA_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CODE_DIR):$(PROJECT_PATH_ENV)/$(CODE_DIR):rw \
 		--volume $(PROJECT_PATH_STORAGE)/$(CONFIG_DIR):$(PROJECT_PATH_ENV)/$(CONFIG_DIR):rw \
@@ -388,10 +394,6 @@ dist: _check_setup upload-code upload-scripts upload-config   ### Run a distribu
 		${OPTION_GCP_CREDENTIALS} ${OPTION_AWS_CREDENTIALS} ${OPTION_WANDB_CREDENTIALS} \
 		$(CUSTOM_ENV_NAME) \
 		$(DIST_CMD)
-ifeq (${TRAIN_STREAM_LOGS}, yes)
-	@echo "Streaming logs of the job $(DIST_JOB)-$(RUN)"
-	$(NEURO) exec --no-key-check -T $(DIST_JOB)-$(RUN) "tail -f -n 1000000 /output" || echo -e "Stopped streaming logs.\nUse 'neuro logs <job>' to see full logs."
-endif
 
 .PHONY: kill-dist
 kill-dist:  ### Terminate the distributed training job (set up env var 'RUN' to specify the training job)
