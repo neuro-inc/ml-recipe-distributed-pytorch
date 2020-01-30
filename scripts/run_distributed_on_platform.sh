@@ -23,7 +23,7 @@ make dist DIST_WAIT_START=yes \
 
 MASTER_IP=$(neuro status dist-qa-competition-master | awk '/Internal Hostname:/ {print $3}')
 
-echo "Running the worker jobs..."
+echo "Running worker jobs..."
 
 for ((i=1;i<$WORLD_SIZE;i++))
 do

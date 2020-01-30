@@ -1,6 +1,3 @@
-# new logs issue, to make visible error message
-sleep 10
-
 if [ "$MASTER_IP" == 0 ]
 then
     MASTER_IP="$(hostname).platform-jobs"
