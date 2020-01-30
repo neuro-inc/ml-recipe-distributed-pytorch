@@ -42,6 +42,9 @@ def run_worker(device, params, model_params):
     logger = get_logger(level=log_level, filename=log_file, filemode='a', logger_name='train', debug=params.debug)
 
     logger.warning(f'Process with local_rank: {params.local_rank}. Used device: {device}. GPU id: {gpu_id}.')
+    if params.distributed:
+        logger.warning(f'Batch size will be increased by {params.dist_world_size} times because of distributed '
+                       f'training. Correct your learning rate in the proper way.')
 
     model, tokenizer = init_model(model_params, bpe_dropout=params.bpe_dropout)
     optimizer = init_optimizer(params, model)
@@ -116,7 +119,8 @@ def main(params, model_params) -> None:
 
     set_seed(params.seed)
 
-    # todo: wrong rank if nodes have different gpu number or when node does not have a gpu
+    # Wrong rank if nodes have different gpu number or when node does not have a gpu
+    # Only nodes with the same preset are supported
     params.dist_ngpus_per_node = torch.cuda.device_count()
     params.dist_world_size *= params.dist_ngpus_per_node
     params.distributed = params.dist_world_size > 1

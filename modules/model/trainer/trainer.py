@@ -87,11 +87,26 @@ class Trainer:
         self.model = self.model.to(self.device)
         self.loss = self.loss.to(self.device)
 
+        self.train_dataloader = Trainer._init_dataloader(self.train_dataset,
+                                                         'Train',
+                                                         batch_size=int(self.train_batch_size // self.batch_split),
+                                                         n_jobs=self.n_jobs,
+                                                         sampler=self._init_train_sampler(),
+                                                         drop_last=True,
+                                                         collate_fun=self.collate_fun)
+
+        self.test_dataloader = Trainer._init_dataloader(self.test_dataset,
+                                                        'Test',
+                                                        batch_size=self.test_batch_size,
+                                                        n_jobs=self.n_jobs,
+                                                        sampler=None,
+                                                        drop_last=False,
+                                                        collate_fun=self.collate_fun)
+
         self.scheduler = None
-        use_scheduler = self.train_dataset is not None and self.optimizer is not None and self.warmup_coef > 0
+        use_scheduler = self.train_dataloader is not None and self.optimizer is not None and self.warmup_coef > 0
         if use_scheduler:
-            # todo: incorrect value during distributed training?
-            num_training_steps = self.n_epochs * len(self.train_dataset) // self.train_batch_size
+            num_training_steps = self.n_epochs * len(self.train_dataloader) // self.batch_split
             num_warmup_steps = int(num_training_steps * self.warmup_coef)
 
             logger.info(f'Wurmup scheldure is used. #Training steps: {num_training_steps}. '
@@ -115,22 +130,6 @@ class Trainer:
                 )
             else:
                 self.model = torch.nn.parallel.DistributedDataParallel(self.model, find_unused_parameters=True)
-
-        self.train_dataloader = Trainer._init_dataloader(self.train_dataset,
-                                                         'Train',
-                                                         batch_size=int(self.train_batch_size // self.batch_split),
-                                                         n_jobs=self.n_jobs,
-                                                         sampler=self._init_train_sampler(),
-                                                         drop_last=True,
-                                                         collate_fun=self.collate_fun)
-
-        self.test_dataloader = Trainer._init_dataloader(self.test_dataset,
-                                                        'Test',
-                                                        batch_size=self.test_batch_size,
-                                                        n_jobs=self.n_jobs,
-                                                        sampler=None,
-                                                        drop_last=False,
-                                                        collate_fun=self.collate_fun)
 
         self.global_step = 0
         self.writer = Trainer._init_writer(self.local_rank, self.writer_dir)
