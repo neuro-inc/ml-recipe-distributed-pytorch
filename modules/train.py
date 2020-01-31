@@ -34,9 +34,6 @@ def run_worker(device, params, model_params):
             if params.dist_ngpus_per_node * params.n_jobs > mp.cpu_count():
                 params.n_jobs = mp.cpu_count() // (2 * params.dist_ngpus_per_node)
 
-        # Wait dataset initialization in main process. Dataset directory mast be shared
-        torch.distributed.barrier()
-
     log_file = params.log_file if params.local_rank in [-1, 0] else None
     log_level = logging.INFO if params.local_rank in [-1, 0] else logging.WARN
     logger = get_logger(level=log_level, filename=log_file, filemode='a', logger_name='train', debug=params.debug)
@@ -48,7 +45,19 @@ def run_worker(device, params, model_params):
 
     model, tokenizer = init_model(model_params, bpe_dropout=params.bpe_dropout)
     optimizer = init_optimizer(params, model)
-    train_dataset, test_dataset, train_weights = init_datasets(params, tokenizer=tokenizer, clear=False)
+
+    if params.local_rank in [0, -1]:
+        # Preparing dataset in main process if it is required.
+        train_dataset, test_dataset, train_weights = init_datasets(params, tokenizer=tokenizer, clear=False)
+
+    if params.local_rank != -1:
+        # Wait dataset initialization in main process. Dataset directory must be shared
+        torch.distributed.barrier()
+
+    if params.local_rank not in [0, -1]:
+        # Loading prepared dataset in other jobs.
+        train_dataset, test_dataset, train_weights = init_datasets(params, tokenizer=tokenizer, clear=False)
+
     loss = init_loss(params, train_weights)
 
     trainer = Trainer(model=model,
@@ -129,9 +138,8 @@ def main(params, model_params) -> None:
     logger.info(f'Distributed: {params.distributed}. Distributed multiprocessing: {params.distributed_mp}. '
                 f'World size: {params.dist_world_size}, #GPU: {params.dist_ngpus_per_node}.')
 
-    if params.distributed and params.local_rank == 0:
-        logger.info('Preparing dataset in main process if it is required...')
-        _ = init_datasets(params, tokenizer=None, clear=params.clear_processed)
+    if params.distributed:
+        logger.warning('It can take a while to start all worker processes and connect to the master host.')
 
     if params.distributed_mp:
         mp.spawn(run_worker, nprocs=params.dist_ngpus_per_node, args=(params, model_params))
