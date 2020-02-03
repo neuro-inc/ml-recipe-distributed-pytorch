@@ -140,7 +140,7 @@ def init_optimizer(params, model):
     logger.info(f'Used optimizer: {type(optimizer).__name__}.')
 
     if modules is not None:
-        model.modules = modules
+        model.list_of_trainable_modules = modules
 
     return optimizer
 

@@ -224,18 +224,16 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
     def set_train(self):
-        if self.apex_level is None and hasattr(self.model, 'modules'):
-            for module in self.model.modules:
+        if self.apex_level is None and hasattr(self.model, 'list_of_trainable_modules'):
+            assert isinstance(self.model.list_of_trainable_modules, list) and all(
+                [isinstance(m, nn.Module) for m in self.model.list_of_trainable_modules])
+            for module in self.model.list_of_trainable_modules:
                 module.train()
         else:
             self.model.train()
 
     def set_eval(self):
-        if self.apex_level is None and hasattr(self.model, 'modules'):
-            for module in self.model.modules:
-                module.eval()
-        else:
-            self.model.eval()
+        self.model.eval()
 
     def _to_device(self, data):
         if isinstance(data, (list, tuple)):
