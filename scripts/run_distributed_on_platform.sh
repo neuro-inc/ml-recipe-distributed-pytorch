@@ -1,10 +1,9 @@
+# Change WORLD_SIZE variable to change the number of jobs used during distributed training
+# Change PRESET variable to hardware specification which is used by jobs
 WORLD_SIZE=2
-LOCAL_RANK=0
+PRESET='gpu-small'
 
 MASTER_PORT=9080
-MASTER_IP=0
-
-PRESET='gpu-small'
 
 SCRIPT_NAME='worker.sh'
 CONFIG_NAME='test_bert.cfg'
@@ -13,9 +12,9 @@ echo "Running the master job..."
 
 make dist DIST_WAIT_START=yes \
           PRESET=$PRESET \
-          LOCAL_RANK=$LOCAL_RANK \
+          LOCAL_RANK=0 \
           WORLD_SIZE=$WORLD_SIZE \
-          MASTER_IP=$MASTER_IP \
+          MASTER_IP=0 \
           MASTER_PORT=$MASTER_PORT \
           SCRIPT_NAME=$SCRIPT_NAME \
           CONFIG_NAME=$CONFIG_NAME \
