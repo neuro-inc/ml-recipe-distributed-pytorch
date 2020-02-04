@@ -12,15 +12,15 @@ SCRIPTS_DIR?=scripts
 
 PROJECT_FILES=requirements.txt apt.txt setup.cfg project_configure.sh
 
-PROJECT_PATH_STORAGE?=storage:ml-recipe-distributed-pytorch
+PROJECT_PATH_STORAGE?=storage:distributed-pytorch
 
-PROJECT_PATH_ENV?=/ml-recipe-distributed-pytorch
+PROJECT_PATH_ENV?=/distributed-pytorch
 
 PROJECT_ENVIRONMENT?=/project-env
 
 ##### JOB NAMES #####
 
-PROJECT_POSTFIX?=ml-recipe-distributed-pytorch
+PROJECT_POSTFIX?=distributed-pytorch
 
 SETUP_JOB?=setup-$(PROJECT_POSTFIX)
 TRAIN_JOB?=train-$(PROJECT_POSTFIX)
@@ -62,8 +62,8 @@ HTTP_AUTH?=--http-auth
 TRAIN_STREAM_LOGS?=yes
 
 # Command to run training inside the environment. Example:
-SCRIPT_NAME=main_worker.sh
-CONFIG_NAME=test_bert.sh
+SCRIPT_NAME=worker.sh
+CONFIG_NAME=test_bert.cfg
 
 TRAIN_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && python -u $(CODE_DIR)/train.py -c $(CONFIG_DIR)/$(CONFIG_NAME)'"
 DIST_CMD="bash -c 'cd $(PROJECT_PATH_ENV) && chmod +x $(SCRIPTS_DIR)/$(SCRIPT_NAME) && $(SCRIPTS_DIR)/$(SCRIPT_NAME) -c $(CONFIG_DIR)/$(CONFIG_NAME)'"
