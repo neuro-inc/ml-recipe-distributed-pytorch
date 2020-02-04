@@ -10,6 +10,9 @@ pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cud
 cd /project-configure
 
 # tokenizers
+pip install transformers
+pip uninstall -y tokenizers
+
 curl https://sh.rustup.rs -sSf | sh -s -- -y
 export PATH="$HOME/.cargo/bin:$PATH"
 
