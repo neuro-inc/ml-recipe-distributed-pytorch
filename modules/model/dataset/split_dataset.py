@@ -94,15 +94,6 @@ class RawPreprocessor(object):
 
         line['short_answers'] = annotations['short_answers']
 
-        # long_answer_candidates = []
-        # for d in raw_line['long_answer_candidates']:
-        #     if d['top_level']:
-        #         start = d['start_token']
-        #         end = d['end_token']
-        #
-        #         long_answer_candidates.append(' '.join(document_text[start:end]))
-        # line['long_answer_candidates'] = long_answer_candidates
-
         line['long_answer_candidates'] = raw_line['long_answer_candidates']
 
         return line
