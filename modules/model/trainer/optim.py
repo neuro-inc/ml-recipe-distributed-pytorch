@@ -2,6 +2,8 @@ import math
 import torch
 from torch.optim import Optimizer
 
+# Implementation is borrowed from https://github.com/lancopku/AdaMod/blob/master/adamod/adamod.py
+
 
 class AdaMod(Optimizer):
     """Implements AdaMod algorithm with Decoupled Weight Decay (arxiv.org/abs/1711.05101)
