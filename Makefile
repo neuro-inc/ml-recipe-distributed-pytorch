@@ -12,15 +12,15 @@ SCRIPTS_DIR?=scripts
 
 PROJECT_FILES=requirements.txt apt.txt setup.cfg project_configure.sh
 
-PROJECT_PATH_STORAGE?=storage:qa-competition
+PROJECT_PATH_STORAGE?=storage:ml-recipe-distributed-pytorch
 
-PROJECT_PATH_ENV?=/qa-competition
+PROJECT_PATH_ENV?=/ml-recipe-distributed-pytorch
 
 PROJECT_ENVIRONMENT?=/project-env
 
 ##### JOB NAMES #####
 
-PROJECT_POSTFIX?=qa-competition
+PROJECT_POSTFIX?=ml-recipe-distributed-pytorch
 
 SETUP_JOB?=setup-$(PROJECT_POSTFIX)
 TRAIN_JOB?=train-$(PROJECT_POSTFIX)

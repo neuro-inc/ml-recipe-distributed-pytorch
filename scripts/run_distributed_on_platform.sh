@@ -21,7 +21,7 @@ make dist DIST_WAIT_START=yes \
           CONFIG_NAME=$CONFIG_NAME \
           RUN=master
 
-MASTER_IP=$(neuro status dist-qa-competition-master | awk '/Internal Hostname:/ {print $3}')
+MASTER_IP=$(neuro status dist-ml-recipe-distributed-pytorch-master | awk '/Internal Hostname:/ {print $3}')
 
 echo "Running worker jobs..."
 
@@ -39,5 +39,5 @@ do
 done
 
 echo "All jobs were initialized."
-echo "Streaming logs of the job dist-qa-competition-master"
+echo "Streaming logs of the job dist-ml-recipe-distributed-pytorch-master"
 neuro exec --no-key-check -T dist-qa-competition-master "tail -f -n 1000000 /output" || echo -e "Stopped streaming logs.\nUse 'neuro logs <job>' to see full logs."
