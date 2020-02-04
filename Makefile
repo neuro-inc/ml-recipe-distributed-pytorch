@@ -32,8 +32,6 @@ FILEBROWSER_JOB?=filebrowser-$(PROJECT_POSTFIX)
 
 ##### ENVIRONMENTS #####
 
-# BASE_ENV_NAME?=image://atselousov/pytorch/pytorch:1.3-cuda10.1-cudnn7-devel#neuromation/base
-# CUSTOM_ENV_NAME?=image:neuromation-$(PROJECT_POSTFIX)-test
 BASE_ENV_NAME?=neuromation/base:latest
 CUSTOM_ENV_NAME?=image:neuromation-$(PROJECT_POSTFIX):$(VERSION)
 
