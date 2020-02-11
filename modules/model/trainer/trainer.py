@@ -2,6 +2,8 @@ import os
 import shutil
 from dataclasses import dataclass
 from typing import Any, Optional
+import time
+import functools
 
 import torch
 import torch.nn as nn
@@ -31,6 +33,19 @@ def initialize_apex(model, *, optimizer=None, apex_level=None,
                                           verbosity=apex_verbosity)
 
     return model, optimizer
+
+
+def time_profiler(fun):
+    @functools.wraps(fun)
+    def _profiled_func(*args, **kwargs):
+        start = time.perf_counter()
+        try:
+            return fun(*args, **kwargs)
+        finally:
+            elapsed_time = time.perf_counter() - start
+            logger.info(f'Execution of {fun.__name__} took {elapsed_time:.3f} sec.')
+
+    return _profiled_func
 
 
 @dataclass
@@ -262,6 +277,7 @@ class Trainer:
             self._train(epoch_i)
             run_after_funcs()
 
+    @time_profiler
     def _train(self, epoch_i):
         self.set_train()
         self.optimizer.zero_grad()
@@ -317,6 +333,7 @@ class Trainer:
             torch.distributed.barrier()
 
     @torch.no_grad()
+    @time_profiler
     def _test(self, epoch_i, *, callbacks=None):
         self.set_eval()
 
