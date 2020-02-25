@@ -11,26 +11,23 @@ from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler, D
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import get_linear_schedule_with_warmup
+from .utils import apex
 
 from .callback import TestCallback
 from .meters import *
+
 
 logger = logging.getLogger(__file__)
 
 
 def initialize_apex(model, *, optimizer=None, apex_level=None,
                     apex_loss_scale=None, apex_num_losses=1, apex_verbosity=0):
-    if apex_level is not None:
-        try:
-            from apex import amp
-        except ImportError:
-            raise ImportError('Install Apex to train model with mixed precision.')
-
-        model, optimizer = amp.initialize(model, optimizer,
-                                          opt_level=apex_level,
-                                          loss_scale=apex_loss_scale,
-                                          num_losses=apex_num_losses,
-                                          verbosity=apex_verbosity)
+    if apex is not None and apex_level is not None:
+        model, optimizer = apex.amp.initialize(model, optimizer,
+                                               opt_level=apex_level,
+                                               loss_scale=apex_loss_scale,
+                                               num_losses=apex_num_losses,
+                                               verbosity=apex_verbosity)
 
     return model, optimizer
 
@@ -90,11 +87,10 @@ class Trainer:
     def __post_init__(self):
 
         if self.sync_bn and self.local_rank != -1:
-            try:
-                import apex
+            if apex is not None:
                 self.model = apex.parallel.convert_syncbn_model(self.model)
                 logger.info('BatchNorm was synchronized across nodes with APEX module.')
-            except ImportError:
+            else:
                 self.model = nn.SyncBatchNorm.convert_sync_batchnorm(self.model)
                 logger.info('BatchNorm was synchronized across nodes with Pytorch module.')
 
@@ -201,13 +197,8 @@ class Trainer:
     def _backward(self, loss):
         loss = loss / self.batch_split
 
-        if self.apex_level is not None:
-            try:
-                from apex import amp
-            except ImportError:
-                raise ImportError('Install Apex to train model with mixed precision.')
-
-            with amp.scale_loss(loss, self.optimizer) as scale_loss:
+        if apex is not None and self.apex_level is not None:
+            with apex.amp.scale_loss(loss, self.optimizer) as scale_loss:
                 scale_loss.backward()
         else:
             loss.backward()
@@ -228,13 +219,8 @@ class Trainer:
                                        global_step=self.global_step)
 
     def _clip_grad_norm(self):
-        if self.apex_level is not None:
-            try:
-                from apex import amp
-            except ImportError:
-                raise ImportError('Install Apex to train model with mixed precision.')
-
-            torch.nn.utils.clip_grad_norm_(amp.master_params(self.optimizer), self.max_grad_norm)
+        if apex is not None and self.apex_level is not None:
+            torch.nn.utils.clip_grad_norm_(apex.amp.master_params(self.optimizer), self.max_grad_norm)
         else:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
@@ -385,6 +371,9 @@ class Trainer:
                       'scheduler': scheduler_dict,
                       'global_step': self.global_step}
 
+        if apex is not None:
+            state_dict['apex'] = apex.amp.state_dict()
+
         torch.save(state_dict, path_)
 
         logger.info(f'State dict was saved to {path_}.')
@@ -407,5 +396,8 @@ class Trainer:
             self.optimizer.load_state_dict(state_dict['optimizer'])
             if self.scheduler is not None:
                 self.scheduler.load_state_dict(state_dict['scheduler'])
+
+            if apex is not None and 'apex' in state_dict:
+                apex.amp.load_state_dict(state_dict['amp'])
 
             logger.info(f'Optimizer and scheduler also were restored from {path_} checkpoint.')
