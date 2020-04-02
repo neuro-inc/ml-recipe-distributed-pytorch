@@ -4,8 +4,9 @@ mkdir /project-configure
 cd /project-configure
 
 # apex
-git clone https://github.com/NVIDIA/apex && cd apex
-pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
+# (already installed on neuromation/base with tag >= v1.3)
+#git clone https://github.com/NVIDIA/apex && cd apex
+#pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
 
 cd /project-configure
 
