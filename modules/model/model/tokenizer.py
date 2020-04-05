@@ -26,7 +26,6 @@ class Tokenizer:
             self.tokenizer = BertWordPieceTokenizer(vocab_file,
                                                     lowercase=lowercase,
                                                     handle_chinese_chars=handle_chinese_chars,
-                                                    add_special_tokens=False,
                                                     unk_token=self.unk_token,
                                                     cls_token=self.cls_token,
                                                     sep_token=self.sep_token)
