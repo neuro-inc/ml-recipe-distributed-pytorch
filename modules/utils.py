@@ -33,12 +33,14 @@ def get_logger(*, level=logging.INFO, filename=None, filemode='w', logger_name=N
 
 def set_seed(seed=None):
     if seed is not None:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = True
-        torch.manual_seed(seed)
-
         random.seed(seed)
         np.random.seed(seed)
+
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
         logger.info(f'Random seed was set to {seed}. It can affect speed of training and performance of result model.')
 
