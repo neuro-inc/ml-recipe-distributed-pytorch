@@ -1,7 +1,7 @@
 # Change WORLD_SIZE variable to change the number of jobs used during distributed training
 # Change PRESET variable to hardware specification which is used by jobs
 WORLD_SIZE=2
-PRESET='gpu-small'
+PRESET='gpu-k80-small'
 
 MASTER_PORT=9080
 

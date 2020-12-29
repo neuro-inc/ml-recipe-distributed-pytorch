@@ -48,7 +48,7 @@ DATA_DIR_STORAGE?=$(PROJECT_PATH_STORAGE)/$(DATA_DIR)
 RESULTS_DIR_STORAGE?=$(PROJECT_PATH_STORAGE)/$(RESULTS_DIR)
 
 # The type of the training machine (run `neuro config show` to see the list of available types).
-PRESET?=gpu-small
+PRESET?=gpu-k80-small
 
 # HTTP authentication (via cookies) for the job's HTTP link.
 # Applied only to jupyter, tensorboard and filebrowser jobs.

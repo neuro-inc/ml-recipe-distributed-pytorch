@@ -10,15 +10,5 @@ pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cud
 cd /project-configure
 
 # tokenizers
-pip install transformers
-pip uninstall -y tokenizers
-
-curl https://sh.rustup.rs -sSf | sh -s -- -y
-export PATH="$HOME/.cargo/bin:$PATH"
-
-git clone https://github.com/huggingface/tokenizers
-
-cd tokenizers/bindings/python
-
-pip install setuptools_rust
-python setup.py install
+pip install 'transformers>=3.5.1,<4.0.0'
+pip install 'tokenizers==0.9.4'
